@@ -19,9 +19,14 @@ from AppKit import (
     NSApplicationActivationPolicyAccessory,
     NSEvent,
     NSKeyDownMask,
+    NSMakeRect,
     NSMenu,
     NSMenuItem,
+    NSPopover,
     NSStatusBar,
+    NSTextField,
+    NSView,
+    NSViewController,
     NSVariableStatusItemLength,
 )
 from Foundation import NSObject
@@ -43,6 +48,7 @@ class WisperApp(NSObject):
         )
         self.status_item.button().setTitle_("W")
         self.status_item.setMenu_(self.build_menu())
+        self.popover = None
         self.install_hotkey_monitor()
 
     @objc.python_method
@@ -173,6 +179,18 @@ class WisperApp(NSObject):
         return key.lower() == expected_key.lower()
 
     @objc.python_method
+    def is_recording(self):
+        lockfile = Path("/tmp/dictate_recording")
+        if not lockfile.exists():
+            return False
+        try:
+            pid = int(lockfile.read_text().strip())
+            os.kill(pid, 0)
+            return True
+        except Exception:
+            return False
+
+    @objc.python_method
     def _run_command(self, args):
         env = os.environ.copy()
         env["PATH"] = (
@@ -197,11 +215,16 @@ class WisperApp(NSObject):
         )
 
     def toggleDictation_(self, sender):
-        self.status_item.button().setTitle_("...")
+        stopping = self.is_recording()
+        self.status_item.button().setTitle_("..." if stopping else "REC")
+        self._show_popover("Transcribing..." if stopping else "Recording...")
         try:
             result = self._run_command([str(DICTATE)])
-            self._notify("Wisper", result.stdout.strip() or "Done")
+            message = self._clean_output(result.stdout.strip() or "Done")
+            self._show_popover(message)
+            self._notify("Wisper", message)
         except Exception as exc:
+            self._show_popover(f"Error: {exc}")
             self._notify("Wisper error", str(exc))
         finally:
             self.status_item.button().setTitle_("W")
@@ -219,6 +242,41 @@ class WisperApp(NSObject):
 
     def quit_(self, sender):
         NSApplication.sharedApplication().terminate_(self)
+
+    @objc.python_method
+    def _show_popover(self, message, timeout=1.8):
+        if self.popover is not None:
+            self.popover.close()
+
+        label = NSTextField.labelWithString_(message[:160])
+        label.setFrame_(NSMakeRect(14, 12, 260, 42))
+        label.setLineBreakMode_(0)
+
+        view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 288, 66))
+        view.addSubview_(label)
+
+        controller = NSViewController.alloc().init()
+        controller.setView_(view)
+
+        self.popover = NSPopover.alloc().init()
+        self.popover.setContentViewController_(controller)
+        self.popover.showRelativeToRect_ofView_preferredEdge_(
+            self.status_item.button().bounds(), self.status_item.button(), 3
+        )
+        AppHelper.callLater(timeout, self._close_popover)
+
+    @objc.python_method
+    def _close_popover(self):
+        if self.popover is not None:
+            self.popover.close()
+            self.popover = None
+
+    @objc.python_method
+    def _clean_output(self, text):
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            return "Done"
+        return lines[-1]
 
     @objc.python_method
     def _notify(self, title, message):
