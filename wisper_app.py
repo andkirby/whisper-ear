@@ -128,6 +128,10 @@ class WisperApp(NSObject):
         self.config = self.load_config()
         self.verbose = "--verbose" in sys.argv or self.config.get("logging", {}).get("verbose", False)
         self.quiet = "--quiet" in sys.argv
+
+        # Clean up stale recording state from previous session
+        self._cleanup_stale_recording()
+
         self.status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(
             NSVariableStatusItemLength
         )
@@ -135,6 +139,7 @@ class WisperApp(NSObject):
         self.status_item.setMenu_(self.build_menu())
         self.float = FloatWindow.alloc().initWithConfig_(CONFIG)
         self.float.setConfig_(self.config)
+        self.is_recording = False
         self.install_hotkey_monitor()
         model = self.config.get('dictation', {}).get('model', 'base')
         self.log(
@@ -347,16 +352,20 @@ class WisperApp(NSObject):
         return key.lower() == expected_key.lower()
 
     @objc.python_method
-    def is_recording(self):
+    @objc.python_method
+    def _cleanup_stale_recording(self):
+        """Kill any orphaned rec process from a previous session."""
         lockfile = Path("/tmp/dictate_recording")
         if not lockfile.exists():
-            return False
+            return
         try:
             pid = int(lockfile.read_text().strip())
-            os.kill(pid, 0)
-            return True
-        except Exception:
-            return False
+            os.kill(pid, signal.SIGTERM)
+            self.log(f"cleaned up orphaned recording (PID {pid})", force=True)
+        except (ProcessLookupError, ValueError, OSError):
+            pass
+        lockfile.unlink(missing_ok=True)
+        Path("/tmp/dictate_audio.wav").unlink(missing_ok=True)
 
     @objc.python_method
     def _run_command(self, args):
@@ -384,7 +393,8 @@ class WisperApp(NSObject):
         )
 
     def toggleDictation_(self, sender):
-        stopping = self.is_recording()
+        stopping = self.is_recording
+        self.is_recording = not self.is_recording
         self.log("dictation stop requested" if stopping else "dictation start requested")
         self.status_item.button().setTitle_("..." if stopping else "REC")
         self.float.show(
@@ -401,6 +411,7 @@ class WisperApp(NSObject):
                 self.float.show("Listening", mode="recording")
         except Exception as exc:
             self.log(f"dictation error {exc}")
+            self.is_recording = False
             self.float.show(f"Error: {exc}", mode="error", timeout=2.5)
         finally:
             self.status_item.button().setTitle_("W")
