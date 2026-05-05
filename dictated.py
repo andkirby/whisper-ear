@@ -10,6 +10,10 @@ Usage:
   dictated.py serve          # run daemon loop (used internally by start)
 
 Protocol: writes request file, daemon picks it up, writes response file.
+
+Auto-unload: models NOT in keep_loaded_models are unloaded after
+unload_timeout_minutes of inactivity. The daemon keeps running but
+releases the model from memory. Next request reloads it (~0.8s).
 """
 
 import sys
@@ -26,11 +30,50 @@ REQUEST_FILE = DAEMON_DIR / "request.json"
 RESPONSE_FILE = DAEMON_DIR / "response.json"
 PID_FILE = DAEMON_DIR / "daemon.pid"
 READY_FILE = DAEMON_DIR / "ready"
+STATUS_FILE = DAEMON_DIR / "status.json"
 MODEL_NAME = os.environ.get("DICTATE_MODEL", "base")
 INITIAL_PROMPT = os.environ.get("DICTATE_INITIAL_PROMPT") or None
 HOTWORDS = os.environ.get("DICTATE_HOTWORDS") or None
+CONFIG_PATH = os.environ.get("DICTATE_CONFIG", "")
+
+# Defaults (overridden by config.json)
+UNLOAD_TIMEOUT_MINUTES = 5
+KEEP_LOADED_MODELS = ["tiny", "base"]
 
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+
+
+def load_daemon_config():
+    """Load daemon settings from config.json if available."""
+    global UNLOAD_TIMEOUT_MINUTES, KEEP_LOADED_MODELS
+
+    config_file = CONFIG_PATH or str(Path(__file__).resolve().parent / "config.json")
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        daemon_cfg = data.get("daemon", {})
+        if "unload_timeout_minutes" in daemon_cfg:
+            UNLOAD_TIMEOUT_MINUTES = daemon_cfg["unload_timeout_minutes"]
+        if "keep_loaded_models" in daemon_cfg:
+            KEEP_LOADED_MODELS = daemon_cfg["keep_loaded_models"]
+    except Exception:
+        pass
+
+
+def should_keep_loaded(model=None):
+    """Check if the model should stay loaded permanently."""
+    name = model or MODEL_NAME
+    return name in KEEP_LOADED_MODELS
+
+
+def write_status(state, model=None):
+    """Write daemon status for external queries."""
+    STATUS_FILE.write_text(json.dumps({
+        "state": state,
+        "model": model or MODEL_NAME,
+        "pid": os.getpid(),
+        "keep_loaded": should_keep_loaded(model),
+    }))
 
 
 def ensure_dir():
@@ -68,8 +111,11 @@ def cmd_start():
         print(f"Already running (PID {PID_FILE.read_text().strip()})")
         return
 
-    # Start as a fresh process (not fork — avoids CTranslate2 threading issues)
     READY_FILE.unlink(missing_ok=True)
+
+    env = os.environ.copy()
+    if CONFIG_PATH:
+        env["DICTATE_CONFIG"] = CONFIG_PATH
 
     subprocess.Popen(
         [sys.executable, __file__, "serve"],
@@ -77,10 +123,11 @@ def cmd_start():
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
         start_new_session=True,
+        env=env,
     )
 
     # Wait for daemon to signal ready (model loaded)
-    for _ in range(60):  # up to 30s
+    for _ in range(60):
         if READY_FILE.exists():
             pid = PID_FILE.read_text().strip()
             print(f"✓ Daemon started (PID {pid})")
@@ -92,18 +139,19 @@ def cmd_start():
 
 
 def cmd_serve():
-    """Main daemon loop — load model once, process requests. Runs as its own process."""
+    """Main daemon loop with auto-unload support."""
     ensure_dir()
     PID_FILE.write_text(str(os.getpid()))
     READY_FILE.unlink(missing_ok=True)
     REQUEST_FILE.unlink(missing_ok=True)
     RESPONSE_FILE.unlink(missing_ok=True)
+    STATUS_FILE.unlink(missing_ok=True)
+
+    load_daemon_config()
 
     def shutdown(sig, frame):
-        PID_FILE.unlink(missing_ok=True)
-        REQUEST_FILE.unlink(missing_ok=True)
-        RESPONSE_FILE.unlink(missing_ok=True)
-        READY_FILE.unlink(missing_ok=True)
+        for f in [PID_FILE, REQUEST_FILE, RESPONSE_FILE, READY_FILE, STATUS_FILE]:
+            f.unlink(missing_ok=True)
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, shutdown)
@@ -111,14 +159,44 @@ def cmd_serve():
 
     from faster_whisper import WhisperModel
 
-    t0 = time.time()
-    model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
-    load_time = time.time() - t0
+    model = None
+    last_request_time = None
 
-    # Signal ready
-    READY_FILE.write_text(f"model={MODEL_NAME} load={load_time:.1f}s")
+    def load_model():
+        nonlocal model
+        t0 = time.time()
+        model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
+        load_time = time.time() - t0
+        READY_FILE.write_text(f"model={MODEL_NAME} load={load_time:.1f}s")
+        write_status("loaded")
+        return load_time
+
+    def unload_model():
+        nonlocal model
+        model = None
+        READY_FILE.unlink(missing_ok=True)
+        write_status("unloaded")
+        # Force garbage collection to release memory
+        import gc
+        gc.collect()
+
+    # Initial load
+    load_time = load_model()
+
+    keep_loaded = should_keep_loaded()
+    timeout_secs = UNLOAD_TIMEOUT_MINUTES * 60
 
     while True:
+        # Check for unload timeout
+        if (
+            not keep_loaded
+            and model is not None
+            and last_request_time is not None
+            and (time.time() - last_request_time) > timeout_secs
+        ):
+            unload_model()
+            last_request_time = None
+
         if REQUEST_FILE.exists():
             try:
                 req = json.loads(REQUEST_FILE.read_text())
@@ -127,6 +205,11 @@ def cmd_serve():
                 time.sleep(0.1)
                 continue
 
+            # Reload model if unloaded
+            if model is None:
+                load_model()
+
+            last_request_time = time.time()
             audio_path = req.get("file", "")
             language = req.get("language")
 
@@ -162,14 +245,38 @@ def cmd_stop():
 
 
 def cmd_status():
-    if is_running():
-        pid = PID_FILE.read_text().strip()
-        ready = READY_FILE.exists()
-        prompt = "on" if INITIAL_PROMPT else "off"
-        hotwords = "on" if HOTWORDS else "off"
-        print(f"Running (PID {pid}, model={MODEL_NAME}, ready={ready}, initial_prompt={prompt}, hotwords={hotwords})")
-    else:
+    if not is_running():
         print("Not running")
+        return
+    pid = PID_FILE.read_text().strip()
+
+    # Try to read detailed status
+    state = "unknown"
+    model = MODEL_NAME
+    keep_loaded = False
+    if STATUS_FILE.exists():
+        try:
+            data = json.loads(STATUS_FILE.read_text())
+            state = data.get("state", "unknown")
+            model = data.get("model", MODEL_NAME)
+            keep_loaded = data.get("keep_loaded", False)
+        except Exception:
+            pass
+
+    ready = READY_FILE.exists()
+    prompt = "on" if INITIAL_PROMPT else "off"
+    hotwords = "on" if HOTWORDS else "off"
+
+    parts = [f"PID {pid}", f"model={model}", f"state={state}"]
+    if keep_loaded:
+        parts.append("keep_loaded=yes")
+    else:
+        parts.append(f"unload_after={UNLOAD_TIMEOUT_MINUTES}m")
+    parts.append(f"ready={ready}")
+    parts.append(f"initial_prompt={prompt}")
+    parts.append(f"hotwords={hotwords}")
+
+    print(f"Running ({', '.join(parts)})")
 
 
 def cmd_transcribe(audio_path, language=None):

@@ -8,6 +8,10 @@
     "initial_prompt": "",
     "hotwords": ""
   },
+  "daemon": {
+    "unload_timeout_minutes": 5,
+    "keep_loaded_models": ["tiny", "base"]
+  },
   "logging": {
     "enabled": true,
     "verbose": false,

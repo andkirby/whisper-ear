@@ -355,6 +355,7 @@ class WisperApp(NSObject):
             env["DICTATE_INITIAL_PROMPT"] = dictation["initial_prompt"]
         if dictation.get("hotwords"):
             env["DICTATE_HOTWORDS"] = dictation["hotwords"]
+        env["DICTATE_CONFIG"] = str(CONFIG)
         return subprocess.run(
             args,
             cwd=str(ROOT),
