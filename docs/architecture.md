@@ -4,36 +4,36 @@
 
 ```mermaid
 graph TB
-    subgraph Menu bar app
-        A[wisper_app.py<br/>PyObjC menu bar]
-        B[float_window.py<br/>Voice level overlay]
+    subgraph menu["Menu bar app"]
+        A["wisper_app.py — PyObjC menu bar"]
+        B["float_window.py — Voice level overlay"]
     end
 
-    subgraph Hotkey
-        C[Carbon hotkey<br/>Option+Space]
-        D[AppKit monitor<br/>fallback]
+    subgraph hotkey["Hotkey"]
+        C["Carbon hotkey — Option+Space"]
+        D["AppKit monitor — fallback"]
     end
 
-    subgraph Shell
-        E[bin/dictate<br/>toggle script]
-        F[sox rec<br/>mic recording]
+    subgraph shell["Shell"]
+        E["bin/dictate — toggle script"]
+        F["sox rec — mic recording"]
     end
 
-    subgraph Daemon
-        G[dictated.py<br/>background process]
-        H[faster-whisper<br/>base model, int8]
+    subgraph daemon["Daemon"]
+        G["dictated.py — background process"]
+        H["faster-whisper — base model, int8"]
     end
 
-    I[/tmp/dictate_audio.wav]
-    J[Active app<br/>cursor position]
-    K[config.json<br/>hotkey, model, daemon]
+    I["/tmp/dictate_audio.wav"]
+    J["Active app — cursor position"]
+    K["config.json — hotkey, model, daemon"]
 
     C -->|pressed| A
     D -->|fallback| A
     A -->|1st press| E
     A -->|2nd press| E
     K -.->|reads| A
-    A -->|status & dot| B
+    A -->|status and dot| B
     E -->|start| F
     F -->|writes| I
     E -->|transcribe request| G
@@ -119,25 +119,25 @@ Configured in `config.json`:
 
 ```mermaid
 graph TB
-    subgraph In memory — wisper_app.py
-        A[is_recording: bool]
-        B[float window<br/>position, dot, label]
-        C[config dict<br/>hotkey, model, daemon]
+    subgraph mem["In memory - wisper_app.py"]
+        A["is_recording: bool"]
+        B["float window — position, dot, label"]
+        C["config dict — hotkey, model, daemon"]
     end
 
-    subgraph /tmp — filesystem protocol
-        D[dictate_audio.wav<br/>48kHz 32-bit mono]
-        E[dictate_recording<br/>PID lockfile]
-        F[dictated/request.json<br/>file path + language]
-        G[dictated/response.json<br/>transcribed text]
-        H[dictated/status.json<br/>state + model + pid]
-        I[dictated/daemon.pid<br/>daemon PID]
-        J[dictated/daemon.log<br/>timestamped events]
+    subgraph fs["/tmp - filesystem protocol"]
+        D["dictate_audio.wav — 48kHz 32-bit mono"]
+        E["dictate_recording — PID lockfile"]
+        F["dictated/request.json — file path + language"]
+        G["dictated/response.json — transcribed text"]
+        H["dictated/status.json — state + model + pid"]
+        I["dictated/daemon.pid — daemon PID"]
+        J["dictated/daemon.log — timestamped events"]
     end
 
-    subgraph Daemon process
-        K[dictated.py<br/>polling loop]
-        L[WhisperModel<br/>base, CPU, int8]
+    subgraph proc["Daemon process"]
+        K["dictated.py — polling loop"]
+        L["WhisperModel — base, CPU, int8"]
     end
 
     A -->|manages| E
@@ -171,12 +171,12 @@ bin/dictate                           dictated.py
 
 ```mermaid
 graph LR
-    A[sox rec<br/>writes WAV] -->|growing file| B[/tmp/dictate_audio.wav]
-    B -->|background thread<br/>reads last 0.15s| C[RMS calculation<br/>32-bit PCM samples]
-    C -->|level 0..1| D[callAfter<br/>main thread]
-    D --> E[dot size: 6–28px]
-    D --> F[color: red → green]
-    D --> G[label: Waiting / Listening]
+    A["sox rec - writes WAV"] -->|growing file| B["/tmp/dictate_audio.wav"]
+    B -->|reads last 0.15s| C["RMS calculation - 32-bit PCM samples"]
+    C -->|level 0..1| D["callAfter - main thread"]
+    D --> E["dot size: 6-28px"]
+    D --> F["color: red to green"]
+    D --> G["label: Waiting / Listening"]
 ```
 
 Key detail: reads **raw bytes** from file tail (skipping 44-byte WAV header), not via `wave.open()`. Sox writes a placeholder header with ~2GB frame count that breaks `wave`.
