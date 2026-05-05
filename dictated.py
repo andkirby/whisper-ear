@@ -104,15 +104,24 @@ def is_running():
         return False
 
 
-def wait_for_response(timeout=30):
-    """Poll for response file, return text content."""
+def wait_for_response(request_id, timeout=30):
+    """Poll for response file matching request_id, return text content."""
     start = time.time()
     while time.time() - start < timeout:
         if RESPONSE_FILE.exists():
             time.sleep(0.05)
-            data = json.loads(RESPONSE_FILE.read_text())
+            try:
+                data = json.loads(RESPONSE_FILE.read_text())
+            except (json.JSONDecodeError, FileNotFoundError):
+                time.sleep(0.05)
+                continue
+            # Only accept response matching our request
+            if data.get("request_id") == request_id:
+                RESPONSE_FILE.unlink(missing_ok=True)
+                return data.get("text", "")
+            # Stale response from a previous request — discard
+            daemon_log(f"discarding stale response (expected {request_id}, got {data.get('request_id')})")
             RESPONSE_FILE.unlink(missing_ok=True)
-            return data.get("text", "")
         time.sleep(0.05)
     return ""
 
@@ -243,7 +252,10 @@ def cmd_serve():
                 text = ""
                 daemon_log(f"transcription error: {e}")
 
-            RESPONSE_FILE.write_text(json.dumps({"text": text}))
+            RESPONSE_FILE.write_text(json.dumps({
+                "text": text,
+                "request_id": req.get("request_id"),
+            }))
 
         time.sleep(0.05)
 
@@ -303,12 +315,17 @@ def cmd_transcribe(audio_path, language=None):
         cmd_start()
 
     ensure_dir()
+    # Clean up any stale response from a previous timed-out request
+    RESPONSE_FILE.unlink(missing_ok=True)
+
+    request_id = f"{os.getpid()}_{int(time.time() * 1000)}"
     REQUEST_FILE.write_text(json.dumps({
         "file": str(audio_path),
         "language": language,
+        "request_id": request_id,
     }))
 
-    text = wait_for_response()
+    text = wait_for_response(request_id)
     print(text)
 
 
