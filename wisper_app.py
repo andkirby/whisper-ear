@@ -136,10 +136,13 @@ class WisperApp(NSObject):
         self.float = FloatWindow.alloc().initWithConfig_(CONFIG)
         self.float.setConfig_(self.config)
         self.install_hotkey_monitor()
+        model = self.config.get('dictation', {}).get('model', 'base')
         self.log(
             f"ready hotkey={self.hotkey_label(self.config.get('hotkey', {}))} "
-            f"model={self.config.get('dictation', {}).get('model', 'base')}"
+            f"model={model}",
+            force=True,
         )
+        self.float.show(f"Ready — {model}", mode="done", timeout=2.0)
 
     @objc.python_method
     def build_menu(self):

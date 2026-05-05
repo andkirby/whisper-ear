@@ -17,6 +17,8 @@ Usage from WisperApp:
 
 import json
 import math
+import struct
+import threading
 from pathlib import Path
 
 import objc
@@ -42,8 +44,12 @@ from PyObjCTools import AppHelper
 WIDTH = 280
 HEIGHT = 54
 DOT_SIZE = 20
+DOT_MIN = 6
+DOT_MAX = 28
 DOT_MARGIN = 16
-LABEL_LEFT = DOT_MARGIN + DOT_SIZE + 6  # 42px
+LABEL_LEFT = DOT_MARGIN + DOT_MAX + 6  # 50px
+WAV_PATH = Path("/tmp/dictate_audio.wav")
+PULSE_INTERVAL = 0.08  # seconds between ticks
 
 
 class FloatWindow(NSObject):
@@ -60,6 +66,8 @@ class FloatWindow(NSObject):
         self._dot = None
         self._pulse_timer = None
         self._pulse_phase = 0.0
+        self._last_level = 0.0
+        self._is_speaking = False
         return self
 
     def initWithConfig_(self, config_path):
@@ -86,7 +94,7 @@ class FloatWindow(NSObject):
 
         if mode == "recording":
             self._start_pulse()
-        else:
+        elif self._pulse_timer is not None:
             self._stop_pulse()
 
         marker = {
@@ -165,43 +173,96 @@ class FloatWindow(NSObject):
         self._window.setContentView_(view)
         self._window.setDelegate_(self)
 
-    # ── Pulse animation ────────────────────────────────────
+    # ── Voice level visualization ─────────────────────────
 
     @objc.python_method
     def _start_pulse(self):
         if self._pulse_timer is not None:
             return
-        self._pulse_phase = 0.0
-        self._pulse_timer = AppHelper.callLater(0.06, self._pulse_tick)
+        self._last_level = 0.0
+        self._is_speaking = False
+        self._pulse_timer = True
+        self._pulse_thread = threading.Thread(target=self._pulse_loop, daemon=True)
+        self._pulse_thread.start()
 
     @objc.python_method
     def _stop_pulse(self):
         self._pulse_timer = None
+        self._is_speaking = False
+        if self._dot is not None:
+            AppHelper.callAfter(self._reset_dot)
+
+    def _reset_dot(self):
         if self._dot is not None:
             self._dot.setFrame_(
                 NSMakeRect(DOT_MARGIN, (HEIGHT - DOT_SIZE) / 2, DOT_SIZE, DOT_SIZE)
             )
             self._dot.layer().setBackgroundColor_(NSColor.systemRedColor().CGColor())
 
-    def _pulse_tick(self):
-        if self._pulse_timer is None or self._dot is None:
+    @objc.python_method
+    def _pulse_loop(self):
+        """Background thread: reads mic level, marshals UI updates to main thread."""
+        import time
+        while self._pulse_timer is not None:
+            level = self._read_mic_level()
+            self._last_level = self._last_level * 0.3 + level * 0.7
+            t = self._last_level
+            speaking = t > 0.02
+            if speaking != self._is_speaking:
+                self._is_speaking = speaking
+            AppHelper.callAfter(self._update_dot, t, speaking)
+            time.sleep(PULSE_INTERVAL)
+
+    def _update_dot(self, t, speaking):
+        """Called on main thread to update the dot and label."""
+        if self._dot is None or self._pulse_timer is None:
             return
 
-        self._pulse_phase += 0.12
-        t = abs(math.sin(self._pulse_phase))
+        # Update label
+        self._label.setStringValue_("Listening" if speaking else "Waiting…")
 
-        scale = 0.7 + 0.3 * t
-        size = DOT_SIZE * scale
+        # Dot size: quiet=DOT_MIN, loud=DOT_MAX
+        size = DOT_MIN + (DOT_MAX - DOT_MIN) * t
         cy = HEIGHT / 2
-        cx = DOT_MARGIN + DOT_SIZE / 2
+        cx = DOT_MARGIN + DOT_MAX / 2
         self._dot.setFrame_(NSMakeRect(cx - size / 2, cy - size / 2, size, size))
 
-        alpha = 0.6 + 0.4 * t
+        # Color: dim red (quiet) → bright green (loud)
+        r = 1.0 - 0.6 * t
+        g = 0.3 + 0.7 * t
+        b = 0.1
+        a = 0.6 + 0.4 * t
         self._dot.layer().setBackgroundColor_(
-            NSColor.systemRedColor().colorWithAlphaComponent_(alpha).CGColor()
+            NSColor.colorWithRed_green_blue_alpha_(r, g, b, a).CGColor()
         )
 
-        self._pulse_timer = AppHelper.callLater(0.06, self._pulse_tick)
+    @objc.python_method
+    def _read_mic_level(self):
+        """Read raw PCM from the end of the live WAV and return RMS volume 0..1.
+
+        sox writes 48kHz 32-bit signed int PCM after a 44-byte WAV header.
+        We skip wave.open() entirely and read raw bytes — much more reliable
+        with a file that's being actively written to.
+        """
+        try:
+            fsize = WAV_PATH.stat().st_size
+            if fsize < 200:
+                return 0.0
+            # Read last ~0.15s of audio (48000 Hz * 4 bytes/sample * 0.15s)
+            chunk_bytes = int(48000 * 4 * 0.15)
+            start = max(44, fsize - chunk_bytes)
+            with open(str(WAV_PATH), "rb") as f:
+                f.seek(start)
+                raw = f.read()
+            n_samples = len(raw) // 4
+            if n_samples < 100:
+                return 0.0
+            samples = struct.unpack(f"<{n_samples}i", raw[:n_samples * 4])
+            rms = math.sqrt(sum(s * s for s in samples) / n_samples)
+            # 32-bit range is ±2^31, speech typically 1e7-5e8
+            return min(1.0, rms / 2e8)
+        except Exception:
+            return 0.0
 
     # ── Position persistence ───────────────────────────────
 

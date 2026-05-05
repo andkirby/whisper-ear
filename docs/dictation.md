@@ -1,12 +1,14 @@
 # Dictation — Live Mic → Text → Paste
 
-> Global hotkey dictation using `bin/dictate` + `dictated.py`.
+> Global hotkey dictation using `bin/dictate` + `dictated.py` + `float_window.py`.
 
 ## How it works
 
 ```
-⌘⇧D (press 1) → sox records mic to /tmp/dictate_audio.wav
-⌘⇧D (press 2) → sox stops → dictated.py daemon transcribes → pbcopy → CMD+V paste into active app
+Option+Space (press 1) → sox records mic to /tmp/dictate_audio.wav
+                         float overlay shows voice-level dot + "Waiting…" / "Listening"
+Option+Space (press 2) → sox stops → dictated.py daemon transcribes → pbcopy → CMD+V paste
+                         float overlay shows "✓ result" for 1.8s
 ```
 
 **Toggle mode**: one hotkey, press to start, press again to stop. Text appears at your cursor.
@@ -16,10 +18,11 @@
 | File | Purpose |
 |---|---|
 | `bin/dictate` | Shell script — toggle record/stop, calls dictated.py daemon, pastes result |
-| `bin/wisper-app` | macOS menu bar launcher for the Python prototype |
-| `dictate.py` | Python — transcribes a WAV file, outputs plain text to stdout |
+| `bin/wisper-app` | macOS menu bar launcher |
+| `dictate.py` | Standalone one-shot transcriber (used without daemon) |
 | `dictated.py` | Python daemon — keeps the Whisper model loaded between dictations |
-| `wisper_app.py` | PyObjC menu bar app with Option+Shift+Space monitor |
+| `wisper_app.py` | PyObjC menu bar app with Carbon hotkey, delegates to bin/dictate |
+| `float_window.py` | Float overlay — voice level dot, status text, draggable, position persistence |
 
 ## Setup
 
@@ -41,42 +44,33 @@ python3 dictate.py /tmp/test.wav
 bin/dictate --check
 
 # Test full toggle flow
-bin/dictate   # press 1 → "Recording…" notification
+bin/dictate   # press 1 → "🎤 Recording…"
 # speak...
-bin/dictate   # press 2 → text pasted + notification
+bin/dictate   # press 2 → text pasted
 ```
 
-### 3. Bind a global hotkey
-
-#### Option A: Python menu bar app prototype
+### 3. Run the menu bar app
 
 ```bash
 bin/wisper-app
 ```
 
-This adds a `W` item to the macOS menu bar. It has:
+Adds a `W` item to the macOS menu bar. Listens for **Option+Space** (configurable in `config.json`).
 
-- `Toggle Dictation`
-- `Check Setup`
-- `Stop Daemon`
-- `Quit`
+Features:
+- **Float overlay**: draggable status pill with live voice-level dot
+  - Red tiny dot = silence ("Waiting…")
+  - Green growing dot = voice detected ("Listening")
+  - Position remembered between sessions
+- **Menu**: Toggle Dictation, Check Setup, Stop Daemon, Quit
+- **Carbon hotkey**: registers with macOS so foreground app doesn't receive the keypress
+- **Auto-starts daemon**: if `dictated.py` isn't running, starts it automatically
 
-It also listens for `Option+Shift+Space` while running. macOS may require Accessibility or Input Monitoring permission for the Python process.
-The terminal stays open while the app runs. Press `Ctrl-C` in that terminal to quit.
-Hotkey/menu actions show a small popover on the `W` item with current state.
-While recording, a small floating status window stays visible.
-App usage logs go to stdout. With `devpt`, use `devpt logs wisper-app`.
-The app registers the hotkey with macOS Carbon first. That consumes the shortcut, so the active app should not receive the Space press. If Carbon registration fails, it falls back to AppKit monitoring, which may not consume the key.
+macOS may require Microphone, Accessibility, and Input Monitoring permissions.
 
-Change the hotkey in `config.json`. See [Configuration](configuration.md).
+### 4. Alternative hotkey options
 
-To launch it in the background:
-
-```bash
-nohup bin/wisper-app >/tmp/wisper-app.log 2>&1 &
-```
-
-#### Option B: Hammerspoon
+#### Hammerspoon
 
 ```lua
 -- ~/.hammerspoon/init.lua
@@ -86,16 +80,12 @@ hs.hotkey.bind({"cmd", "shift"}, "d", function()
 end)
 ```
 
-#### Option C: macOS Shortcuts
+#### macOS Shortcuts
 
 1. Open **Shortcuts** app → New Shortcut
 2. Add **"Run Shell Script"** action
 3. Paste: `cd "$HOME/home/wisper" && bin/dictate`
 4. Shortcut settings → **Add Keyboard Shortcut** (e.g. ⌘⇧D)
-
-#### Option D: Raycast
-
-Create a Script Command pointing to `bin/dictate`, bind a hotkey in Raycast settings.
 
 ## Architecture
 
@@ -104,29 +94,38 @@ bin/dictate (bash)
   ├─ START:  rec (sox) → writes /tmp/dictate_audio.wav, PID saved to /tmp/dictate_recording
   └─ STOP:   kill rec → sleep 0.3 (flush) → python3 dictated.py transcribe → pbcopy → osascript CMD+V
 
-dictated.py (python daemon)
-  faster-whisper (base model, CPU, int8) → Silero-VAD → plain text response
+dictated.py (python daemon, keeps model in memory)
+  Main loop polls /tmp/dictated/request.json
+  → faster-whisper transcribes → writes /tmp/dictated/response.json
+
+float_window.py (pyobjc)
+  Background thread reads raw PCM from WAV file tail
+  → computes RMS → marshals dot size/color update to main thread
+  → dot: 6-28px, red→green based on volume
+  → label: "Waiting…" / "Listening" based on voice detection threshold
 ```
 
 ### Why `base` model for dictation?
 
 - **Speed**: `base` transcribes in ~0.5-2s for typical dictation clips vs ~3-8s for `large-v3-turbo`
 - **Good enough**: single-speaker dictation is an easy task for `base`
-- **Override**: run `DICTATE_MODEL=large-v3-turbo bin/dictate` or edit the daemon default if you need higher quality
+- **Override**: run `DICTATE_MODEL=large-v3-turbo bin/dictate` or edit config if you need higher quality
 
-### Temporary files
+### Voice level reading
 
-| Path | Purpose | Lifespan |
-|---|---|---|
-| `/tmp/dictate_audio.wav` | Recorded audio | Deleted after transcription |
-| `/tmp/dictate_recording` | PID lockfile | Deleted after stop |
+The float window reads audio levels in real-time:
+- Background thread reads last 0.15s of raw PCM bytes from `/tmp/dictate_audio.wav`
+- Skips `wave.open()` (sox writes placeholder header) — reads raw 32-bit signed int samples
+- Computes RMS, normalizes to 0–1 range
+- Smoothing: 30% old / 70% new for fast response
+- Speaking threshold: level > 0.02
 
 ## Latency breakdown
 
 | Step | Time |
 |---|---|
 | Stop recording (sox flush) | ~300ms |
-| Transcription (`base` model) | ~0.5-2s |
+| Transcription (`base` model, daemon) | ~0.5-2s |
 | Clipboard + paste | ~100ms |
 | **Total** | **~1-3s** |
 
@@ -140,48 +139,66 @@ dictated.py (python daemon)
 | Paste doesn't work | Check System Settings → Privacy → Accessibility → enable the trigger app |
 | Slow transcription | Use smaller model: set `DICTATE_MODEL=tiny` for `bin/dictate` or edit `dictated.py` |
 | Empty output | Check the WAV was recorded: `ls -la /tmp/dictate_audio.wav` |
+| Dot doesn't react to voice | Check `/tmp/dictate_audio.wav` exists during recording and grows in size |
+| Daemon won't start | Try `python3 dictated.py serve` for foreground logs |
 
 ## Customization
 
 ### Change model for dictation
 
-For the daemon flow, set `DICTATE_MODEL` before launching `bin/dictate`:
+In `config.json`:
+```json
+{
+  "dictation": {
+    "model": "small"
+  }
+}
+```
 
+Or via environment variable:
 ```bash
 DICTATE_MODEL=small bin/dictate
 ```
 
-Or edit the default in `dictated.py`:
-```python
-MODEL_NAME = os.environ.get("DICTATE_MODEL", "small")  # was "base"
-```
+Then restart daemon: `python3 dictated.py stop`
 
 ### Add Whisper prompt context
 
-`faster-whisper` can receive decoder context. This is not LLM post-processing; it nudges Whisper during transcription.
-
-```bash
-export DICTATE_INITIAL_PROMPT="This is personal dictation. Preserve the speaker's wording. Use clear punctuation and capitalization."
-export DICTATE_HOTWORDS="Wisper faster-whisper CTranslate2 Hammerspoon Raycast"
-python3 dictated.py stop
-bin/dictate
+In `config.json`:
+```json
+{
+  "dictation": {
+    "initial_prompt": "Transcribe natural speech. Preserve the spoken language.",
+    "hotwords": "Wisper faster-whisper CTranslate2 Hammerspoon"
+  }
+}
 ```
 
-`DICTATE_INITIAL_PROMPT` is useful for style/context. `DICTATE_HOTWORDS` is useful for names, tools, project terms, and uncommon words.
+This is passed to Whisper as `initial_prompt` and `hotwords`. It is not LLM post-processing.
 
-For a hotkey launcher, set the variables in the launcher command:
+Then restart daemon: `python3 dictated.py stop`
 
-```lua
-local wisper = os.getenv("HOME") .. "/home/wisper"
-hs.hotkey.bind({"cmd", "shift"}, "d", function()
-    hs.execute('cd ' .. wisper .. ' && DICTATE_INITIAL_PROMPT="This is concise personal dictation." bin/dictate')
-end)
+### Change hotkey
+
+In `config.json`:
+```json
+{
+  "hotkey": {
+    "modifiers": ["option"],
+    "key": "space"
+  }
+}
 ```
+
+Supported modifiers: `command`, `option`, `control`, `shift`.
+Supported keys: `space`, `a`–`z`, `0`–`9`.
+
+Restart the menu bar app after changing.
 
 ### Change recording quality
 
 Edit `bin/dictate`:
 ```bash
-rec -r 48000 -c 1 -q "$WAVFILE"    # 48kHz native Mac rate (faster-whisper resamples internally)
+rec -r 48000 -c 1 -q "$WAVFILE"    # 48kHz native Mac rate (default)
 rec -r 16000 -c 1 -q "$WAVFILE"    # 16kHz (may warn on some hardware)
 ```
