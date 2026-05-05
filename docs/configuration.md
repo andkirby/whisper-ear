@@ -24,6 +24,11 @@ config.example.json
     "model": "base",
     "initial_prompt": "",
     "hotwords": ""
+  },
+  "logging": {
+    "enabled": true,
+    "verbose": false,
+    "log_transcripts": false
   }
 }
 ```
@@ -109,6 +114,44 @@ Add Whisper context:
 This is passed to Whisper as `initial_prompt` and `hotwords`.
 
 It is not LLM post-processing.
+
+## Logging
+
+Default:
+
+```json
+{
+  "logging": {
+    "enabled": true,
+    "verbose": false,
+    "log_transcripts": false
+  }
+}
+```
+
+Logs go to app stdout. With `devpt`:
+
+```bash
+devpt logs wisper-app
+```
+
+Options:
+
+- `enabled`: print lifecycle and action logs.
+- `verbose`: also print full command output.
+- `log_transcripts`: print final dictated text. Off by default for privacy.
+
+One-off verbose run:
+
+```bash
+bin/wisper-app --verbose
+```
+
+Quiet run:
+
+```bash
+bin/wisper-app --quiet
+```
 
 ## Apply Changes
 

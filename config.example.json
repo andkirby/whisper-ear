@@ -7,5 +7,10 @@
     "model": "base",
     "initial_prompt": "",
     "hotwords": ""
+  },
+  "logging": {
+    "enabled": true,
+    "verbose": false,
+    "log_transcripts": false
   }
 }

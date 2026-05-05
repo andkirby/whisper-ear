@@ -64,6 +64,7 @@ This adds a `W` item to the macOS menu bar. It has:
 It also listens for `Option+Shift+Space` while running. macOS may require Accessibility or Input Monitoring permission for the Python process.
 The terminal stays open while the app runs. Press `Ctrl-C` in that terminal to quit.
 Hotkey/menu actions show a small popover on the `W` item with current state.
+App usage logs go to stdout. With `devpt`, use `devpt logs wisper-app`.
 
 Change the hotkey in `config.json`. See [Configuration](configuration.md).
 

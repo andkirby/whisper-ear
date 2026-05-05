@@ -10,6 +10,7 @@ import json
 import signal
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import objc
@@ -43,6 +44,8 @@ PYTHON = str(Path.home() / "miniforge3" / "bin" / "python3")
 class WisperApp(NSObject):
     def applicationDidFinishLaunching_(self, notification):
         self.config = self.load_config()
+        self.verbose = "--verbose" in sys.argv or self.config.get("logging", {}).get("verbose", False)
+        self.quiet = "--quiet" in sys.argv
         self.status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(
             NSVariableStatusItemLength
         )
@@ -50,6 +53,10 @@ class WisperApp(NSObject):
         self.status_item.setMenu_(self.build_menu())
         self.popover = None
         self.install_hotkey_monitor()
+        self.log(
+            f"ready hotkey={self.hotkey_label(self.config.get('hotkey', {}))} "
+            f"model={self.config.get('dictation', {}).get('model', 'base')}"
+        )
 
     @objc.python_method
     def build_menu(self):
@@ -93,6 +100,7 @@ class WisperApp(NSObject):
         defaults = {
             "hotkey": {"modifiers": ["option", "shift"], "key": "space"},
             "dictation": {"model": "base", "initial_prompt": "", "hotwords": ""},
+            "logging": {"enabled": True, "verbose": False, "log_transcripts": False},
         }
         if not CONFIG.exists():
             return defaults
@@ -102,6 +110,7 @@ class WisperApp(NSObject):
             defaults.update(data)
             defaults["hotkey"] = {**{"modifiers": ["option", "shift"], "key": "space"}, **data.get("hotkey", {})}
             defaults["dictation"] = {**{"model": "base", "initial_prompt": "", "hotwords": ""}, **data.get("dictation", {})}
+            defaults["logging"] = {**{"enabled": True, "verbose": False, "log_transcripts": False}, **data.get("logging", {})}
             return defaults
         except Exception:
             return defaults
@@ -149,6 +158,7 @@ class WisperApp(NSObject):
     @objc.python_method
     def handle_local_key_event(self, event):
         if self.is_hotkey(event):
+            self.log("hotkey local")
             self.toggleDictation_(None)
             return None
         return event
@@ -156,6 +166,7 @@ class WisperApp(NSObject):
     @objc.python_method
     def handle_key_event(self, event):
         if self.is_hotkey(event):
+            self.log("hotkey global")
             self.toggleDictation_(None)
 
     @objc.python_method
@@ -216,14 +227,17 @@ class WisperApp(NSObject):
 
     def toggleDictation_(self, sender):
         stopping = self.is_recording()
+        self.log("dictation stop requested" if stopping else "dictation start requested")
         self.status_item.button().setTitle_("..." if stopping else "REC")
         self._show_popover("Transcribing..." if stopping else "Recording...")
         try:
             result = self._run_command([str(DICTATE)])
             message = self._clean_output(result.stdout.strip() or "Done")
+            self.log_command_result("dictate", result.stdout, message)
             self._show_popover(message)
             self._notify("Wisper", message)
         except Exception as exc:
+            self.log(f"dictation error {exc}")
             self._show_popover(f"Error: {exc}")
             self._notify("Wisper error", str(exc))
         finally:
@@ -231,16 +245,22 @@ class WisperApp(NSObject):
 
     def checkSetup_(self, sender):
         try:
+            self.log("check setup")
             result = self._run_command([str(DICTATE), "--check"])
+            self.log_command_result("check", result.stdout, "shown in alert")
             self._alert("Wisper setup", result.stdout.strip())
         except Exception as exc:
+            self.log(f"check setup error {exc}")
             self._alert("Wisper setup error", str(exc))
 
     def stopDaemon_(self, sender):
+        self.log("stop daemon")
         result = self._run_command([PYTHON, str(DICTATED), "stop"])
+        self.log_command_result("stop daemon", result.stdout, result.stdout.strip())
         self._notify("Wisper", result.stdout.strip())
 
     def quit_(self, sender):
+        self.log("quit")
         NSApplication.sharedApplication().terminate_(self)
 
     @objc.python_method
@@ -279,6 +299,38 @@ class WisperApp(NSObject):
         return lines[-1]
 
     @objc.python_method
+    def log(self, message, force=False):
+        logging_config = self.config.get("logging", {})
+        if self.quiet or (not force and not logging_config.get("enabled", True)):
+            return
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] {message}", flush=True)
+
+    @objc.python_method
+    def log_command_result(self, action, output, message):
+        clean = self._strip_ansi(output)
+        if self.verbose:
+            self.log(f"{action} output: {clean.strip() or '(empty)'}")
+        if self.config.get("logging", {}).get("log_transcripts", False):
+            self.log(f"{action} result: {message}")
+        else:
+            self.log(f"{action} result length={len(message)}")
+
+    @objc.python_method
+    def _strip_ansi(self, text):
+        result = []
+        i = 0
+        while i < len(text):
+            if text[i] == "\033":
+                i += 1
+                while i < len(text) and text[i] != "m":
+                    i += 1
+            else:
+                result.append(text[i])
+            i += 1
+        return "".join(result)
+
+    @objc.python_method
     def _notify(self, title, message):
         subprocess.run(
             [
@@ -309,6 +361,11 @@ NSEventModifierFlagShift = 1 << 17
 
 
 def main():
+    if "--help" in sys.argv:
+        print("Usage: bin/wisper-app [--verbose] [--quiet]")
+        print("  --verbose  Print command output and detailed logs")
+        print("  --quiet    Disable app logs")
+        return
     signal.signal(signal.SIGTERM, handle_exit_signal)
     AppHelper.installMachInterrupt()
     app = NSApplication.sharedApplication()
