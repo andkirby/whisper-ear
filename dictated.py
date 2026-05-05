@@ -31,6 +31,18 @@ RESPONSE_FILE = DAEMON_DIR / "response.json"
 PID_FILE = DAEMON_DIR / "daemon.pid"
 READY_FILE = DAEMON_DIR / "ready"
 STATUS_FILE = DAEMON_DIR / "status.json"
+LOG_FILE = DAEMON_DIR / "daemon.log"
+
+
+def daemon_log(message):
+    """Append to daemon log file."""
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] {message}\n")
+    except Exception:
+        pass
 MODEL_NAME = os.environ.get("DICTATE_MODEL", "base")
 INITIAL_PROMPT = os.environ.get("DICTATE_INITIAL_PROMPT") or None
 HOTWORDS = os.environ.get("DICTATE_HOTWORDS") or None
@@ -164,21 +176,24 @@ def cmd_serve():
 
     def load_model():
         nonlocal model
+        daemon_log(f"loading model {MODEL_NAME}…")
         t0 = time.time()
         model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
         load_time = time.time() - t0
+        daemon_log(f"model {MODEL_NAME} loaded ({load_time:.1f}s)")
         READY_FILE.write_text(f"model={MODEL_NAME} load={load_time:.1f}s")
         write_status("loaded")
         return load_time
 
     def unload_model():
         nonlocal model
+        daemon_log(f"unloading model {MODEL_NAME} (idle timeout)")
         model = None
         READY_FILE.unlink(missing_ok=True)
         write_status("unloaded")
-        # Force garbage collection to release memory
         import gc
         gc.collect()
+        daemon_log(f"model {MODEL_NAME} unloaded, memory released")
 
     # Initial load
     load_time = load_model()
@@ -207,6 +222,7 @@ def cmd_serve():
 
             # Reload model if unloaded
             if model is None:
+                daemon_log(f"model unloaded, reloading {MODEL_NAME}…")
                 load_model()
 
             last_request_time = time.time()
@@ -222,8 +238,10 @@ def cmd_serve():
                     hotwords=HOTWORDS,
                 )
                 text = " ".join(s.text.strip() for s in segments)
-            except Exception:
+                daemon_log(f"transcribed {len(text)} chars")
+            except Exception as e:
                 text = ""
+                daemon_log(f"transcription error: {e}")
 
             RESPONSE_FILE.write_text(json.dumps({"text": text}))
 

@@ -143,6 +143,15 @@ class WisperApp(NSObject):
             force=True,
         )
         self.float.show(f"Ready — {model}", mode="done", timeout=2.0)
+        self._schedule_daemon_status_refresh()
+
+        # Startup log with full status
+        daemon_cfg = self.config.get("daemon", {})
+        keep = daemon_cfg.get("keep_loaded_models", ["tiny", "base"])
+        timeout_min = daemon_cfg.get("unload_timeout_minutes", 5)
+        pinned = "pinned" if model in keep else f"unloads after {timeout_min}m"
+        daemon_running = Path("/tmp/dictated/daemon.pid").exists()
+        self.log(f"model={model} ({pinned}) daemon={"running" if daemon_running else "not running"}", force=True)
 
     @objc.python_method
     def build_menu(self):
@@ -160,17 +169,25 @@ class WisperApp(NSObject):
 
         menu.addItem_(NSMenuItem.separatorItem())
 
+        # Daemon status line (updated periodically)
+        self.daemon_status_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Daemon: checking…", "refreshDaemonStatus:", ""
+        )
+        self.daemon_status_item.setTarget_(self)
+        menu.addItem_(self.daemon_status_item)
+
+        # Start/Stop daemon — toggles dynamically
+        self.daemon_toggle_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Stop Daemon", "toggleDaemon:", ""
+        )
+        self.daemon_toggle_item.setTarget_(self)
+        menu.addItem_(self.daemon_toggle_item)
+
         check = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "Check Setup", "checkSetup:", ""
         )
         check.setTarget_(self)
         menu.addItem_(check)
-
-        stop = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "Stop Daemon", "stopDaemon:", ""
-        )
-        stop.setTarget_(self)
-        menu.addItem_(stop)
 
         menu.addItem_(NSMenuItem.separatorItem())
 
@@ -398,10 +415,87 @@ class WisperApp(NSObject):
             self.log(f"check setup error {exc}")
             self._alert("Wisper setup error", str(exc))
 
-    def stopDaemon_(self, sender):
-        self.log("stop daemon")
-        result = self._run_command([PYTHON, str(DICTATED), "stop"])
-        self.log_command_result("stop daemon", result.stdout, result.stdout.strip())
+    def toggleDaemon_(self, sender):
+        """Toggle daemon start/stop based on current state."""
+        status_file = Path("/tmp/dictated/daemon.pid")
+        if status_file.exists():
+            try:
+                pid = int(status_file.read_text().strip())
+                os.kill(pid, 0)
+                # Running — stop it
+                self.log("stopping daemon")
+                result = self._run_command([PYTHON, str(DICTATED), "stop"])
+                self.log_command_result("stop daemon", result.stdout, result.stdout.strip())
+            except (ProcessLookupError, ValueError, OSError):
+                # Stale PID — start it
+                self._start_daemon()
+        else:
+            self._start_daemon()
+        self._refresh_daemon_status()
+
+    @objc.python_method
+    def _start_daemon(self):
+        self.log("starting daemon")
+        result = self._run_command([PYTHON, str(DICTATED), "start"])
+        self.log_command_result("start daemon", result.stdout, result.stdout.strip())
+
+    def refreshDaemonStatus_(self, sender):
+        self._refresh_daemon_status()
+
+    @objc.python_method
+    def _refresh_daemon_status(self):
+        """Update daemon status line and toggle button in the menu."""
+        import json as _json
+        status_file = Path("/tmp/dictated/status.json")
+        model = self.config.get("dictation", {}).get("model", "base")
+
+        daemon_alive = False
+        pid_file = Path("/tmp/dictated/daemon.pid")
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip())
+                os.kill(pid, 0)
+                daemon_alive = True
+            except (ProcessLookupError, ValueError, OSError):
+                daemon_alive = False
+
+        if not daemon_alive:
+            self.daemon_status_item.setTitle_(f"○ {model} — not running")
+            self.daemon_toggle_item.setTitle_("Start Daemon")
+            self.status_item.button().setToolTip_(f"{model} — daemon not running")
+            return
+
+        if not status_file.exists():
+            self.daemon_status_item.setTitle_(f"● {model} — loading…")
+            self.daemon_toggle_item.setTitle_("Stop Daemon")
+            return
+
+        try:
+            data = _json.loads(status_file.read_text())
+            state = data.get("state", "unknown")
+            keep = data.get("keep_loaded", False)
+            timeout = self.config.get("daemon", {}).get("unload_timeout_minutes", 5)
+
+            if state == "loaded":
+                if keep:
+                    label = f"● {model} — loaded (pinned)"
+                else:
+                    label = f"● {model} — loaded (unloads {timeout}m idle)"
+            elif state == "unloaded":
+                label = f"○ {model} — sleeping (reload on demand)"
+            else:
+                label = f"◌ {model} — {state}"
+        except Exception:
+            label = f"● {model} — loading…"
+
+        self.daemon_status_item.setTitle_(label)
+        self.daemon_toggle_item.setTitle_("Stop Daemon")
+        self.status_item.button().setToolTip_(label)
+
+    def _schedule_daemon_status_refresh(self):
+        """Poll daemon status every 10s."""
+        self._refresh_daemon_status()
+        AppHelper.callLater(10.0, self._schedule_daemon_status_refresh)
 
     def quit_(self, sender):
         self.log("quit")
