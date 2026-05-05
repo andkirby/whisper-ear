@@ -10,7 +10,7 @@ graph TB
     end
 
     subgraph hotkey["Hotkey"]
-        C["Carbon hotkey — Option+Space"]
+        C["Carbon hotkey — configurable, default Opt+Shift+Space"]
         D["AppKit monitor — fallback"]
     end
 
@@ -21,12 +21,12 @@ graph TB
 
     subgraph daemon["Daemon"]
         G["dictated.py — background process"]
-        H["faster-whisper — base model, int8"]
+        H["faster-whisper — configurable model, int8"]
     end
 
     I["/tmp/dictate_audio.wav"]
     J["Active app — cursor position"]
-    K["config.json — hotkey, model, daemon"]
+    K["config.json — hotkey, model, daemon, logging, float_window"]
 
     C -->|pressed| A
     D -->|fallback| A
@@ -55,16 +55,16 @@ sequenceDiagram
     participant WAV as /tmp/dictate_audio.wav
     participant Target as Active app
 
-    User->>App: Option+Space (1st press)
+    User->>App: hotkey press (1st — e.g. Opt+Space)
     App->>App: is_recording = true
     App->>Shell: run bin/dictate
-    Shell->>Sox: start rec -r 48000 -c 1
-    Sox->>WAV: writes 32-bit PCM
+    Shell->>Sox: spawn rec via Python subprocess (start_new_session)
+    Sox->>WAV: writes 32-bit PCM (48kHz mono)
     App->>App: float shows "Listening" + pulsing dot
 
     Note over App,WAV: Background: float_window.py reads WAV tail for voice level
 
-    User->>App: Option+Space (2nd press)
+    User->>App: hotkey press (2nd — e.g. Opt+Space)
     App->>App: is_recording = false
     App->>App: float shows "Transcribing..."
     App->>Shell: run bin/dictate
@@ -105,7 +105,7 @@ stateDiagram-v2
 | `medium` | ❌ no | Unloads after 5min idle, reloads on demand |
 | `large-v3-turbo` | ❌ no | Unloads after 5min idle, reloads on demand |
 
-Configured in `config.json`:
+Configured in `config.json` (optional keys — shown values are the defaults if omitted):
 ```json
 {
   "daemon": {
@@ -114,6 +114,8 @@ Configured in `config.json`:
   }
 }
 ```
+These keys are **optional**. When absent, `dictated.py` uses the hardcoded defaults
+(`UNLOAD_TIMEOUT_MINUTES = 5`, `KEEP_LOADED_MODELS = ["tiny", "base"]`).
 
 ## State management (what lives where)
 
@@ -127,20 +129,18 @@ graph TB
 
     subgraph fs["/tmp - filesystem protocol"]
         D["dictate_audio.wav — 48kHz 32-bit mono"]
-        E["dictate_recording — PID lockfile"]
         F["dictated/request.json — file path + language"]
         G["dictated/response.json — transcribed text"]
-        H["dictated/status.json — state + model + pid"]
+        H["dictated/status.json — state + model + pid + keep_loaded"]
         I["dictated/daemon.pid — daemon PID"]
         J["dictated/daemon.log — timestamped events"]
     end
 
     subgraph proc["Daemon process"]
         K["dictated.py — polling loop"]
-        L["WhisperModel — base, CPU, int8"]
+        L["WhisperModel — configured model, CPU, int8"]
     end
 
-    A -->|manages| E
     K -->|polls| F
     K -->|writes| G
     K -->|writes| H
@@ -165,6 +165,14 @@ bin/dictate                           dictated.py
     │  {"text": "Hello world"}            │
     │                                     │
     │  pbcopy + CMD+V into active app     │
+
+wisper_app.py                         dictated.py
+    │                                     │
+    │  reads /tmp/dictated/status.json    │
+    │ <────────────────────────────────── │
+    │  {state, model, pid, keep_loaded}   │
+    │  (polls every 10s for menu status)  │
+    │                                     │
 ```
 
 ## Voice level visualization
@@ -185,35 +193,39 @@ Key detail: reads **raw bytes** from file tail (skipping 44-byte WAV header), no
 
 ```mermaid
 graph TB
-    subgraph User actions
-        Start[bin/wiser-app] 
-        Hotkey[Option+Space]
-        Quit[Quit menu]
+    subgraph actions["User actions"]
+        Start["bin/wisper-app"]
+        Hotkey["configurable, e.g. Opt+Space"]
+        Quit["Quit menu"]
     end
 
-    subgraph Processes
-        App[wiser_app.py<br/>menu bar app]
-        Daemon[dictated.py<br/>background daemon]
-        Rec[sox rec<br/>mic capture]
+    subgraph procs["Processes"]
+        App["wisper_app.py — menu bar app"]
+        Daemon["dictated.py — background daemon"]
+        Rec["sox rec — mic capture"]
     end
 
     Start -->|launches| App
     App -->|auto-starts if needed| Daemon
+    App -->|kills orphaned rec on startup| Rec
     Hotkey -->|1st press| Rec
     Hotkey -->|2nd press| Daemon
     Quit -->|terminates| App
 
-    Note1[Daemon survives app quit<br/>must stop via menu or CLI]
-    Note2[Recording state is in-memory<br/>no stale state after restart]
+    Note1["Daemon orphaned on app quit — stop via menu or CLI"]
+    Note2["Recording state is in-memory — no stale state after restart"]
 ```
 
 ## Memory usage
 
 | Component | RAM | When |
 |---|---|---|
-| `wiser_app.py` | ~30 MB | While app is running |
-| `dictated.py` (daemon) | ~20 MB | Always (survives app quit) |
+| `wisper_app.py` | ~30 MB | While app is running |
+| `dictated.py` (daemon) | ~20 MB | While daemon is running |
+| Whisper `tiny` model | ~75 MB | While loaded (pinned) |
 | Whisper `base` model | ~145 MB | While loaded (pinned) |
-| Whisper `small` model | ~488 MB | While loaded (auto-unloads) |
+| Whisper `small` model | ~488 MB | While loaded (auto-unloads after 5m) |
+| Whisper `medium` model | ~769 MB | While loaded (auto-unloads after 5m) |
+| Whisper `large-v3-turbo` model | ~809 MB | While loaded (auto-unloads after 5m) |
 | `sox rec` | ~5 MB | During recording only |
 | `/tmp/dictate_audio.wav` | disk only | During recording |
