@@ -57,6 +57,7 @@ Check: `python3 -c "from faster_whisper import WhisperModel; print('OK')"`
 - **Paste via System Events** — uses `osascript` to CMD+V into the active app
 - **Whisper prompt context** — optional `DICTATE_INITIAL_PROMPT` and `DICTATE_HOTWORDS`; no LLM/API post-processing
 - **Python app first** — `wisper_app.py` is a fast macOS prototype, not a packaged app yet
+- **Carbon hotkey first** — menu app registers the shortcut with macOS so the foreground app should not receive the keypress; AppKit monitor is fallback only
 - **JSON config** — menu app reads `config.json` for hotkey, model, prompt, and hotwords
 
 ## Running

@@ -65,6 +65,7 @@ It also listens for `Option+Shift+Space` while running. macOS may require Access
 The terminal stays open while the app runs. Press `Ctrl-C` in that terminal to quit.
 Hotkey/menu actions show a small popover on the `W` item with current state.
 App usage logs go to stdout. With `devpt`, use `devpt logs wisper-app`.
+The app registers the hotkey with macOS Carbon first. That consumes the shortcut, so the active app should not receive the Space press. If Carbon registration fails, it falls back to AppKit monitoring, which may not consume the key.
 
 Change the hotkey in `config.json`. See [Configuration](configuration.md).
 

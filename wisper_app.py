@@ -6,6 +6,7 @@ Runs bin/dictate from a menu bar app and listens for Option+Shift+Space.
 """
 
 import os
+import ctypes
 import json
 import signal
 import subprocess
@@ -39,6 +40,88 @@ DICTATE = ROOT / "bin" / "dictate"
 DICTATED = ROOT / "dictated.py"
 CONFIG = ROOT / "config.json"
 PYTHON = str(Path.home() / "miniforge3" / "bin" / "python3")
+
+
+def fourcc(value):
+    return int.from_bytes(value.encode("ascii"), byteorder="big")
+
+
+class EventTypeSpec(ctypes.Structure):
+    _fields_ = [("eventClass", ctypes.c_uint32), ("eventKind", ctypes.c_uint32)]
+
+
+class EventHotKeyID(ctypes.Structure):
+    _fields_ = [("signature", ctypes.c_uint32), ("id", ctypes.c_uint32)]
+
+
+CARBON = ctypes.CDLL("/System/Library/Frameworks/Carbon.framework/Carbon")
+CARBON_CALLBACK = ctypes.CFUNCTYPE(
+    ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p
+)
+CARBON.GetApplicationEventTarget.restype = ctypes.c_void_p
+CARBON.InstallEventHandler.argtypes = [
+    ctypes.c_void_p,
+    CARBON_CALLBACK,
+    ctypes.c_uint32,
+    ctypes.POINTER(EventTypeSpec),
+    ctypes.c_void_p,
+    ctypes.POINTER(ctypes.c_void_p),
+]
+CARBON.RegisterEventHotKey.argtypes = [
+    ctypes.c_uint32,
+    ctypes.c_uint32,
+    EventHotKeyID,
+    ctypes.c_void_p,
+    ctypes.c_uint32,
+    ctypes.POINTER(ctypes.c_void_p),
+]
+
+CARBON_KEY_CODES = {
+    "space": 49,
+    "a": 0,
+    "s": 1,
+    "d": 2,
+    "f": 3,
+    "h": 4,
+    "g": 5,
+    "z": 6,
+    "x": 7,
+    "c": 8,
+    "v": 9,
+    "b": 11,
+    "q": 12,
+    "w": 13,
+    "e": 14,
+    "r": 15,
+    "y": 16,
+    "t": 17,
+    "1": 18,
+    "2": 19,
+    "3": 20,
+    "4": 21,
+    "6": 22,
+    "5": 23,
+    "9": 25,
+    "7": 26,
+    "8": 28,
+    "0": 29,
+    "o": 31,
+    "u": 32,
+    "i": 34,
+    "p": 35,
+    "l": 37,
+    "j": 38,
+    "k": 40,
+    "n": 45,
+    "m": 46,
+}
+
+CARBON_MODIFIERS = {
+    "command": 1 << 8,
+    "shift": 1 << 9,
+    "option": 1 << 11,
+    "control": 1 << 12,
+}
 
 
 class WisperApp(NSObject):
@@ -148,12 +231,66 @@ class WisperApp(NSObject):
 
     @objc.python_method
     def install_hotkey_monitor(self):
+        try:
+            self.install_carbon_hotkey()
+            self.log("hotkey backend=carbon")
+            return
+        except Exception as exc:
+            self.log(f"hotkey backend=appkit fallback reason={exc}")
+
         NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
             NSKeyDownMask, self.handle_key_event
         )
         NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
             NSKeyDownMask, self.handle_local_key_event
         )
+
+    @objc.python_method
+    def install_carbon_hotkey(self):
+        hotkey = self.config.get("hotkey", {})
+        key = hotkey.get("key", "space")
+        key_code = CARBON_KEY_CODES.get(key)
+        if key_code is None:
+            raise ValueError(f"unsupported key: {key}")
+
+        modifiers = 0
+        for modifier in hotkey.get("modifiers", []):
+            if modifier not in CARBON_MODIFIERS:
+                raise ValueError(f"unsupported modifier: {modifier}")
+            modifiers |= CARBON_MODIFIERS[modifier]
+
+        def handler(next_handler, event, user_data):
+            self.log("hotkey carbon")
+            AppHelper.callAfter(self.toggleDictation_, None)
+            return 0
+
+        self._carbon_callback = CARBON_CALLBACK(handler)
+        event_spec = EventTypeSpec(fourcc("keyb"), 5)
+        self._carbon_handler_ref = ctypes.c_void_p()
+        target = CARBON.GetApplicationEventTarget()
+        status = CARBON.InstallEventHandler(
+            target,
+            self._carbon_callback,
+            1,
+            ctypes.byref(event_spec),
+            None,
+            ctypes.byref(self._carbon_handler_ref),
+        )
+        if status != 0:
+            raise RuntimeError(f"InstallApplicationEventHandler status={status}")
+
+        hotkey_id = EventHotKeyID(fourcc("WSPR"), 1)
+        self._carbon_hotkey_ref = ctypes.c_void_p()
+        status = CARBON.RegisterEventHotKey(
+            key_code,
+            modifiers,
+            hotkey_id,
+            target,
+            0,
+            ctypes.byref(self._carbon_hotkey_ref),
+        )
+        if status != 0:
+            raise RuntimeError(f"RegisterEventHotKey status={status}")
 
     @objc.python_method
     def handle_local_key_event(self, event):
