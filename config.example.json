@@ -1,0 +1,11 @@
+{
+  "hotkey": {
+    "modifiers": ["option", "shift"],
+    "key": "space"
+  },
+  "dictation": {
+    "model": "base",
+    "initial_prompt": "",
+    "hotwords": ""
+  }
+}

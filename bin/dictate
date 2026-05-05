@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+#
+# dictate - Global hotkey dictation: record → transcribe → paste
+#
+# Toggle mode:
+#   First press  → starts recording from mic
+#   Second press → stops, transcribes via daemon, pastes into active app
+#
+# Uses dictated.py daemon to keep Whisper model in memory (~0s load time).
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WISPER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DICTATED="$WISPER_DIR/dictated.py"
+LOCKFILE="/tmp/dictate_recording"
+WAVFILE="/tmp/dictate_audio.wav"
+REC_LOG="/tmp/dictate_rec.log"
+
+# Hotkey launchers such as Hammerspoon and Shortcuts do not inherit the
+# interactive shell PATH, so resolve the required tools explicitly.
+PATH="$HOME/miniforge3/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH
+
+BOLD="\033[1m"
+DIM="\033[2m"
+GREEN="\033[32m"
+YELLOW="\033[33m"
+CYAN="\033[36m"
+RED="\033[31m"
+RESET="\033[0m"
+
+fail() {
+    echo -e "${RED}✗  $*${RESET}" >&2
+    osascript -e "display notification \"$*\" with title \"Dictation\"" 2>/dev/null || true
+    exit 1
+}
+
+find_python() {
+    local candidate
+    for candidate in \
+        "$WISPER_DIR/.venv/bin/python3" \
+        "$HOME/miniforge3/bin/python3" \
+        "/opt/homebrew/bin/python3" \
+        "/usr/local/bin/python3" \
+        "python3"
+    do
+        if command -v "$candidate" >/dev/null 2>&1 &&
+           "$candidate" -c 'import faster_whisper' >/dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_rec() {
+    local candidate
+    for candidate in "/opt/homebrew/bin/rec" "/usr/local/bin/rec" "rec"; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+display_path() {
+    local path="$1"
+    echo "${path/#$HOME/~}"
+}
+
+PYTHON3=$(find_python) || fail "No Python with faster-whisper found"
+REC=$(find_rec) || fail "SoX rec not found. Run: brew install sox"
+
+if [ "${1:-}" = "--check" ]; then
+    echo "Python: $(display_path "$PYTHON3")"
+    echo "rec: $(display_path "$REC")"
+    "$PYTHON3" "$DICTATED" status
+    exit 0
+fi
+
+echo -e "${DIM}Model: ${DICTATE_MODEL:-base}${RESET}"
+
+# Auto-start daemon if not running
+if ! "$PYTHON3" "$DICTATED" status 2>/dev/null | grep -q "Running"; then
+    echo -e "${CYAN}🚀 Starting dictation daemon…${RESET}"
+    "$PYTHON3" "$DICTATED" start || fail "Dictation daemon failed to start"
+    sleep 1
+fi
+
+# ── Stale lockfile cleanup ─────────────────────────────────
+is_recording=false
+if [ -f "$LOCKFILE" ]; then
+    PID=$(cat "$LOCKFILE")
+    if kill -0 "$PID" 2>/dev/null; then
+        is_recording=true
+    else
+        rm -f "$LOCKFILE" "$WAVFILE"
+    fi
+fi
+
+# ── Stop + transcribe ──────────────────────────────────────
+if $is_recording; then
+    rm -f "$LOCKFILE"
+    kill "$PID" 2>/dev/null
+    sleep 0.3
+
+    echo ""
+    echo -e "${BOLD}⏹  Stopped recording${RESET}"
+    echo -e "${CYAN}⏳ Transcribing…${RESET}"
+
+    TEXT=$("$PYTHON3" "$DICTATED" transcribe "$WAVFILE" 2>/dev/null || true)
+
+    if [ -n "$TEXT" ]; then
+        echo -n "$TEXT" | pbcopy
+        osascript -e 'tell application "System Events" to keystroke "v" using command down' 2>/dev/null || true
+
+        echo -e "${GREEN}✓  Pasted to active app${RESET}"
+        echo -e "${DIM}   $(echo "$TEXT" | head -c 120)$( [ ${#TEXT} -gt 120 ] && echo '…' )${RESET}"
+        osascript -e "display notification \"$(echo "$TEXT" | head -c 80)\" with title \"Dictated\"" 2>/dev/null || true
+    else
+        echo -e "${RED}✗  No speech detected${RESET}"
+        osascript -e 'display notification "No speech detected" with title "Dictation"' 2>/dev/null || true
+    fi
+
+    rm -f "$WAVFILE"
+    exit 0
+fi
+
+# ── Start recording ────────────────────────────────────────
+rm -f "$WAVFILE"
+
+REC_PID=$("$PYTHON3" - "$REC" "$WAVFILE" "$REC_LOG" <<'PY'
+import subprocess
+import sys
+
+rec, wavfile, log_file = sys.argv[1:]
+with open(log_file, "ab") as log:
+    proc = subprocess.Popen(
+        [rec, "-r", "48000", "-c", "1", "-q", wavfile],
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+print(proc.pid)
+PY
+)
+echo "$REC_PID" > "$LOCKFILE"
+sleep 0.1
+if ! kill -0 "$(cat "$LOCKFILE")" 2>/dev/null; then
+    rm -f "$LOCKFILE" "$WAVFILE"
+    fail "Recording failed. Check microphone permission and $REC_LOG"
+fi
+
+echo -e "${YELLOW}🎤  Recording…${RESET} ${DIM}press hotkey again to stop${RESET}"
+osascript -e 'display notification "Recording… press again to stop" with title "Dictation"' 2>/dev/null || true

@@ -1,0 +1,122 @@
+# Configuration
+
+Wisper reads app settings from:
+
+```text
+config.json
+```
+
+Copy from:
+
+```text
+config.example.json
+```
+
+## Default
+
+```json
+{
+  "hotkey": {
+    "modifiers": ["option", "shift"],
+    "key": "space"
+  },
+  "dictation": {
+    "model": "base",
+    "initial_prompt": "",
+    "hotwords": ""
+  }
+}
+```
+
+## Hotkey
+
+Default:
+
+```text
+Option+Shift+Space
+```
+
+Supported modifiers:
+
+```text
+command
+option
+control
+shift
+```
+
+Supported keys:
+
+```text
+space
+a-z
+0-9
+```
+
+Examples.
+
+Command+Shift+D:
+
+```json
+{
+  "hotkey": {
+    "modifiers": ["command", "shift"],
+    "key": "d"
+  }
+}
+```
+
+Option+Space:
+
+```json
+{
+  "hotkey": {
+    "modifiers": ["option"],
+    "key": "space"
+  }
+}
+```
+
+## Dictation
+
+Set model:
+
+```json
+{
+  "dictation": {
+    "model": "small"
+  }
+}
+```
+
+Good choices:
+
+- `base`: fastest default.
+- `small`: better dictation quality.
+- `large-v3-turbo`: best practical quality, slower.
+
+Add Whisper context:
+
+```json
+{
+  "dictation": {
+    "initial_prompt": "Transcribe natural speech. Preserve the spoken language. Do not translate. Do not rewrite meaning.",
+    "hotwords": "Wisper faster-whisper Hammerspoon Жак Звонарь Фонарь"
+  }
+}
+```
+
+This is passed to Whisper as `initial_prompt` and `hotwords`.
+
+It is not LLM post-processing.
+
+## Apply Changes
+
+Restart the menu bar app after changing `config.json`.
+
+If the model, prompt, or hotwords changed, also stop the daemon:
+
+```bash
+python3 dictated.py stop
+bin/wisper-app
+```

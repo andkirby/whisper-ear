@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WISPER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+cd "$WISPER_DIR"
+exec "$HOME/miniforge3/bin/python3" "$WISPER_DIR/wisper_app.py"

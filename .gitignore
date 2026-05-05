@@ -1,0 +1,43 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local app config and logs
+config.json
+*.log
+
+# IDE/editor state
+.idea/
+.vscode/
+.claude/
+.locks/
+
+# Whisper/model caches
+models--*/
+
+# Large/local media and generated transcript artifacts
+*.mp3
+*.mp4
+*.m4a
+*.mov
+*.webm
+*.wav
+*.json
+!config.example.json
+*.srt
+*.tsv
+*.vtt
+/*.txt
+!/requirements.txt
+
+# Project-local scratch/data
+cards/
+cards/.env
+cards/in/
+cards/out/
+experience/
+vtt/
