@@ -33,7 +33,6 @@ RESET="\033[0m"
 
 fail() {
     echo -e "${RED}✗  $*${RESET}" >&2
-    osascript -e "display notification \"$*\" with title \"Dictation\"" 2>/dev/null || true
     exit 1
 }
 
@@ -119,10 +118,8 @@ if $is_recording; then
 
         echo -e "${GREEN}✓  Pasted to active app${RESET}"
         echo -e "${DIM}   $(echo "$TEXT" | head -c 120)$( [ ${#TEXT} -gt 120 ] && echo '…' )${RESET}"
-        osascript -e "display notification \"$(echo "$TEXT" | head -c 80)\" with title \"Dictated\"" 2>/dev/null || true
     else
         echo -e "${RED}✗  No speech detected${RESET}"
-        osascript -e 'display notification "No speech detected" with title "Dictation"' 2>/dev/null || true
     fi
 
     rm -f "$WAVFILE"
@@ -156,4 +153,3 @@ if ! kill -0 "$(cat "$LOCKFILE")" 2>/dev/null; then
 fi
 
 echo -e "${YELLOW}🎤  Recording…${RESET} ${DIM}press hotkey again to stop${RESET}"
-osascript -e 'display notification "Recording… press again to stop" with title "Dictation"' 2>/dev/null || true
