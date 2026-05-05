@@ -7,7 +7,9 @@ Runs bin/dictate from a menu bar app and listens for Option+Shift+Space.
 
 import os
 import json
+import signal
 import subprocess
+import sys
 from pathlib import Path
 
 import objc
@@ -49,7 +51,9 @@ class WisperApp(NSObject):
 
         hotkey = self.config.get("hotkey", {})
         toggle = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "Toggle Dictation", "toggleDictation:", self.menu_key(hotkey.get("key", "space"))
+            f"Toggle Dictation ({self.hotkey_label(hotkey)})",
+            "toggleDictation:",
+            self.menu_key(hotkey.get("key", "space")),
         )
         toggle.setKeyEquivalentModifierMask_(self.modifier_mask(hotkey.get("modifiers", [])))
         toggle.setTarget_(self)
@@ -95,6 +99,19 @@ class WisperApp(NSObject):
             return defaults
         except Exception:
             return defaults
+
+    @objc.python_method
+    def hotkey_label(self, hotkey):
+        names = {
+            "command": "Cmd",
+            "option": "Opt",
+            "control": "Ctrl",
+            "shift": "Shift",
+        }
+        parts = [names.get(m, m) for m in hotkey.get("modifiers", [])]
+        key = hotkey.get("key", "space")
+        parts.append("Space" if key == "space" else str(key).upper())
+        return "+".join(parts)
 
     @objc.python_method
     def menu_key(self, key):
@@ -234,11 +251,21 @@ NSEventModifierFlagShift = 1 << 17
 
 
 def main():
+    signal.signal(signal.SIGTERM, handle_exit_signal)
+    AppHelper.installMachInterrupt()
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
     delegate = WisperApp.alloc().init()
     app.setDelegate_(delegate)
+    print("Wisper app running. Look for W in the macOS menu bar. Press Ctrl-C here to quit.", flush=True)
     AppHelper.runEventLoop()
+
+
+def handle_exit_signal(signum, frame):
+    print("\nWisper app quitting.", flush=True)
+    app = NSApplication.sharedApplication()
+    app.terminate_(None)
+    sys.exit(0)
 
 
 if __name__ == "__main__":

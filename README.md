@@ -49,6 +49,7 @@ bin/wisper-app
 ```
 
 Adds a `W` menu bar item.
+The terminal stays open while the app runs. Press `Ctrl-C` in that terminal to quit.
 
 Hotkey:
 

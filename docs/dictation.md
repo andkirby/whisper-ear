@@ -62,6 +62,7 @@ This adds a `W` item to the macOS menu bar. It has:
 - `Quit`
 
 It also listens for `Option+Shift+Space` while running. macOS may require Accessibility or Input Monitoring permission for the Python process.
+The terminal stays open while the app runs. Press `Ctrl-C` in that terminal to quit.
 
 Change the hotkey in `config.json`. See [Configuration](configuration.md).
 
