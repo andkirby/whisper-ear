@@ -19,7 +19,10 @@ from AppKit import (
     NSAlert,
     NSApplication,
     NSApplicationActivationPolicyAccessory,
+    NSBackingStoreBuffered,
+    NSColor,
     NSEvent,
+    NSFloatingWindowLevel,
     NSKeyDownMask,
     NSMakeRect,
     NSMenu,
@@ -30,6 +33,12 @@ from AppKit import (
     NSView,
     NSViewController,
     NSVariableStatusItemLength,
+    NSScreen,
+    NSWindow,
+    NSWindowCollectionBehaviorCanJoinAllSpaces,
+    NSWindowCollectionBehaviorIgnoresCycle,
+    NSWindowCollectionBehaviorTransient,
+    NSWindowStyleMaskBorderless,
 )
 from Foundation import NSObject
 from PyObjCTools import AppHelper
@@ -135,6 +144,8 @@ class WisperApp(NSObject):
         self.status_item.button().setTitle_("W")
         self.status_item.setMenu_(self.build_menu())
         self.popover = None
+        self.float_window = None
+        self.float_label = None
         self.install_hotkey_monitor()
         self.log(
             f"ready hotkey={self.hotkey_label(self.config.get('hotkey', {}))} "
@@ -366,15 +377,21 @@ class WisperApp(NSObject):
         stopping = self.is_recording()
         self.log("dictation stop requested" if stopping else "dictation start requested")
         self.status_item.button().setTitle_("..." if stopping else "REC")
+        self._show_float("Transcribing..." if stopping else "Listening", "transcribing" if stopping else "recording")
         self._show_popover("Transcribing..." if stopping else "Recording...")
         try:
             result = self._run_command([str(DICTATE)])
             message = self._clean_output(result.stdout.strip() or "Done")
             self.log_command_result("dictate", result.stdout, message)
+            if stopping:
+                self._show_float(message, "done", timeout=1.8)
+            else:
+                self._show_float("Listening", "recording")
             self._show_popover(message)
             self._notify("Wisper", message)
         except Exception as exc:
             self.log(f"dictation error {exc}")
+            self._show_float(f"Error: {exc}", "error", timeout=2.5)
             self._show_popover(f"Error: {exc}")
             self._notify("Wisper error", str(exc))
         finally:
@@ -421,6 +438,64 @@ class WisperApp(NSObject):
             self.status_item.button().bounds(), self.status_item.button(), 3
         )
         AppHelper.callLater(timeout, self._close_popover)
+
+    @objc.python_method
+    def _show_float(self, message, mode, timeout=None):
+        if self.float_window is None:
+            self._build_float_window()
+
+        marker = {
+            "recording": "●",
+            "transcribing": "⋯",
+            "done": "✓",
+            "error": "!",
+        }.get(mode, "●")
+        self.float_label.setStringValue_(f"{marker} {message[:80]}")
+        self.float_window.orderFrontRegardless()
+
+        if timeout is not None:
+            AppHelper.callLater(timeout, self._close_float)
+
+    @objc.python_method
+    def _build_float_window(self):
+        width = 260
+        height = 54
+        screen = NSScreen.mainScreen().visibleFrame()
+        x = screen.origin.x + screen.size.width - width - 28
+        y = screen.origin.y + screen.size.height - height - 28
+
+        self.float_window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(x, y, width, height),
+            NSWindowStyleMaskBorderless,
+            NSBackingStoreBuffered,
+            False,
+        )
+        self.float_window.setLevel_(NSFloatingWindowLevel)
+        self.float_window.setOpaque_(False)
+        self.float_window.setBackgroundColor_(NSColor.clearColor())
+        self.float_window.setHasShadow_(True)
+        self.float_window.setCollectionBehavior_(
+            NSWindowCollectionBehaviorCanJoinAllSpaces
+            | NSWindowCollectionBehaviorTransient
+            | NSWindowCollectionBehaviorIgnoresCycle
+        )
+
+        view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
+        view.setWantsLayer_(True)
+        view.layer().setCornerRadius_(12)
+        view.layer().setBackgroundColor_(NSColor.blackColor().colorWithAlphaComponent_(0.82).CGColor())
+
+        self.float_label = NSTextField.labelWithString_("● Listening")
+        self.float_label.setTextColor_(NSColor.whiteColor())
+        self.float_label.setFrame_(NSMakeRect(16, 15, width - 32, 24))
+        view.addSubview_(self.float_label)
+
+        self.float_window.setContentView_(view)
+
+    @objc.python_method
+    def _close_float(self):
+        if self.float_window is not None:
+            self.float_window.orderOut_(None)
 
     @objc.python_method
     def _close_popover(self):

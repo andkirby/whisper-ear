@@ -64,6 +64,7 @@ This adds a `W` item to the macOS menu bar. It has:
 It also listens for `Option+Shift+Space` while running. macOS may require Accessibility or Input Monitoring permission for the Python process.
 The terminal stays open while the app runs. Press `Ctrl-C` in that terminal to quit.
 Hotkey/menu actions show a small popover on the `W` item with current state.
+While recording, a small floating status window stays visible.
 App usage logs go to stdout. With `devpt`, use `devpt logs wisper-app`.
 The app registers the hotkey with macOS Carbon first. That consumes the shortcut, so the active app should not receive the Space press. If Carbon registration fails, it falls back to AppKit monitoring, which may not consume the key.
 

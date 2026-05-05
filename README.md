@@ -51,6 +51,7 @@ bin/wisper-app
 Adds a `W` menu bar item.
 The terminal stays open while the app runs. Press `Ctrl-C` in that terminal to quit.
 Hotkey/menu actions show a small popover on the `W` item with current state.
+While recording, a small floating status window stays visible.
 App usage logs go to stdout. With `devpt`, use `devpt logs wisper-app`.
 The app registers the hotkey with macOS, so the active app should not receive the Space press.
 
