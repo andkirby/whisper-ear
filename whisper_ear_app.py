@@ -5,6 +5,7 @@ WhisperEar menu bar prototype for macOS.
 Runs bin/dictate from a menu bar app and listens for Option+Shift+Space.
 """
 
+import json
 import os
 import ctypes
 import signal
@@ -42,6 +43,16 @@ DICTATE = ROOT / "bin" / "dictate"
 DICTATED = ROOT / "dictated.py"
 CONFIG = ROOT / "config.json"
 PYTHON = str(Path.home() / "miniforge3" / "bin" / "python3")
+
+AVAILABLE_MODELS = [
+    ("tiny", "Tiny (~75 MB)"),
+    ("base", "Base (~145 MB)"),
+    ("small", "Small (~488 MB)"),
+    ("medium", "Medium (~769 MB)"),
+    ("large-v3-turbo", "Large v3 Turbo (~809 MB)"),
+    ("distil-large-v3.5", "Distil Large v3.5 (~780 MB)"),
+    ("large-v3", "Large v3 (~1.5 GB)"),
+]
 
 
 def fourcc(value):
@@ -176,6 +187,28 @@ class WhisperEarApp(NSObject):
         toggle.setKeyEquivalentModifierMask_(self.modifier_mask(hotkey.get("modifiers", [])))
         toggle.setTarget_(self)
         menu.addItem_(toggle)
+
+        menu.addItem_(NSMenuItem.separatorItem())
+
+        # Model selection submenu
+        model_menu = NSMenu.alloc().init()
+        self.model_menu_items = {}
+        current_model = self.config.get("dictation", {}).get("model", "base")
+        for model_id, model_label in AVAILABLE_MODELS:
+            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                model_label, "selectModel:", ""
+            )
+            item.setTarget_(self)
+            item.setRepresentedObject_(model_id)
+            item.setState_(1 if model_id == current_model else 0)
+            model_menu.addItem_(item)
+            self.model_menu_items[model_id] = item
+
+        model_parent = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Model", None, ""
+        )
+        model_parent.setSubmenu_(model_menu)
+        menu.addItem_(model_parent)
 
         menu.addItem_(NSMenuItem.separatorItem())
 
@@ -362,6 +395,12 @@ class WhisperEarApp(NSObject):
         if dictation.get("hotwords"):
             env["DICTATE_HOTWORDS"] = dictation["hotwords"]
         env["DICTATE_CONFIG"] = str(CONFIG)
+        daemon = self.config.get("daemon", {})
+        transcription_timeout = daemon.get("transcription_timeout_seconds", 180)
+        try:
+            timeout = max(120.0, float(transcription_timeout) + 30.0)
+        except (TypeError, ValueError):
+            timeout = 210.0
         return subprocess.run(
             args,
             cwd=str(ROOT),
@@ -369,7 +408,7 @@ class WhisperEarApp(NSObject):
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=60,
+            timeout=timeout,
         )
 
     def toggleDictation_(self, sender):
@@ -413,6 +452,61 @@ class WhisperEarApp(NSObject):
         finally:
             self.dictation_busy = False
             self.status_item.button().setTitle_("W")
+
+    def selectModel_(self, sender):
+        model_id = sender.representedObject()
+        if isinstance(model_id, str):
+            self._switch_model(model_id)
+
+    @objc.python_method
+    def _switch_model(self, model_id):
+        self.config = self.load_config()
+        current = self.config.get("dictation", {}).get("model", "base")
+        if model_id == current:
+            return
+
+        self.log(f"switching model: {current} → {model_id}")
+
+        # Update in-memory config
+        self.config.setdefault("dictation", {})["model"] = model_id
+
+        # Persist to config.json
+        try:
+            config_path = Path(CONFIG)
+            config_path.write_text(
+                json.dumps(self.config, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            self.log(f"config write error: {exc}")
+            self.float.show(f"Config error: {exc}", mode="error", timeout=2.5)
+            return
+
+        # Update menu checkmarks
+        for mid, item in self.model_menu_items.items():
+            item.setState_(1 if mid == model_id else 0)
+
+        # Restart daemon if running (MODEL_NAME is a startup-time global)
+        self._restart_daemon_for_model_switch()
+
+        # Update float window and status bar
+        self.float.show(f"Model: {model_id}", mode="done", timeout=1.5)
+        self._refresh_daemon_status()
+        self.log(f"model switched to {model_id}", force=True)
+
+    @objc.python_method
+    def _restart_daemon_for_model_switch(self):
+        pid_file = runtime_paths().pid
+        if not pid_file.exists():
+            return
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, 0)
+            self.log("restarting daemon for model switch")
+            self._run_command([PYTHON, str(DICTATED), "stop"])
+            self._start_daemon()
+        except (ProcessLookupError, ValueError, OSError):
+            pass
 
     def checkSetup_(self, sender):
         try:
