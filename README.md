@@ -5,10 +5,10 @@ Local audio transcription and macOS dictation using `faster-whisper`.
 ## What It Does
 
 - Transcribe audio/video files to JSON or TXT.
-- Record microphone dictation.
+- Record microphone dictation with a toggle hotkey.
 - Transcribe locally on CPU.
 - Paste dictated text into the active app.
-- Run from shell, hotkey launcher, or Python menu bar prototype.
+- Run from shell, hotkey launcher, or macOS menu bar app.
 
 ## Quick Start
 
@@ -50,8 +50,7 @@ bin/whisper-ear-app
 
 Adds a `W` menu bar item.
 The terminal stays open while the app runs. Press `Ctrl-C` in that terminal to quit.
-Hotkey/menu actions show a small popover on the `W` item with current state.
-While recording, a small floating status window stays visible.
+Hotkey/menu actions show a small floating status window with current state.
 App usage logs go to stdout. With `devpt`, use `devpt logs whisper-ear-app`.
 The app registers the hotkey with macOS, so the active app should not receive the Space press.
 
@@ -67,13 +66,33 @@ Option+Shift+Space
 |---|---|
 | `transcribe.py` | File transcription CLI |
 | `dictate.py` | One-shot WAV transcription |
-| `dictated.py` | Dictation daemon, keeps model loaded |
-| `bin/dictate` | Toggle record/stop/paste script |
-| `whisper_ear_app.py` | PyObjC macOS menu bar prototype |
+| `dictated.py` | Dictation daemon, keeps model loaded and serves socket RPC |
+| `bin/dictate` | Toggle record/stop/paste entry point |
+| `whisper_ear/` | Shared package for config, runtime paths, recording, daemon client, paste, and audio levels |
+| `whisper_ear_app.py` | PyObjC macOS menu bar app |
 | `bin/whisper-ear-app` | Launcher for the menu bar app |
+| `bin/wisper-app` | Compatibility launcher for the old app command |
 | `bin/f-whisper` | Wrapper for file transcription |
 | `config.json` | Local app configuration |
 | `config.example.json` | Default config template |
+
+## Architecture
+
+Dictation runtime state lives under:
+
+```text
+$TMPDIR/whisper-ear/
+```
+
+The daemon communicates over a per-user Unix socket:
+
+```text
+$TMPDIR/whisper-ear/dictated.sock
+```
+
+Recording state is session-based (`current-session.json` plus `audio-<session>.wav`), and start/stop operations are serialized with `recording.lock`.
+
+See [Architecture](docs/architecture.md) and [Architecture SOT](docs/architecture/README.md).
 
 ## Configuration
 
@@ -119,11 +138,11 @@ large-v3-turbo
 
 ## Whisper Prompt Context
 
-Use this to bias transcription. This is not LLM cleanup.
+Use this to bias transcription. This is not LLM cleanup or semantic rewriting.
 
 ```bash
-export DICTATE_INITIAL_PROMPT="Transcribe natural speech. Preserve the spoken language. Fix obvious word-boundary errors, names, titles, and capitalization when context makes it clear. Do not translate. Do not rewrite meaning."
-export DICTATE_HOTWORDS="Жак Звонарь Фонарь whisper-ear WhisperEar faster-whisper Hammerspoon"
+export DICTATE_INITIAL_PROMPT="Transcribe natural speech in the spoken language. Do not translate. Do not summarize. Do not rewrite meaning. Preserve technical terms, names, acronyms, commands, file paths, URLs, and code words. Add normal punctuation, capitalization, and paragraph breaks when obvious. Use clear written grammar while keeping the speaker's intent unchanged."
+export DICTATE_HOTWORDS="whisper-ear WhisperEar Whisper faster-whisper CTranslate2 Silero VAD PyObjC AppKit Carbon Hammerspoon"
 python3 dictated.py stop
 bin/dictate
 ```
@@ -147,7 +166,10 @@ PyObjC is needed for `whisper_ear_app.py`. It is already available in the curren
 
 ## More Docs
 
+- [Architecture](docs/architecture.md)
+- [Architecture Source Of Truth](docs/architecture/README.md)
 - [Dictation](docs/dictation.md)
 - [Configuration](docs/configuration.md)
 - [Transcription](docs/transcription.md)
+- [Changelog](CHANGELOG.md)
 - [Legacy transcription README](TRANSCRIBE_README.md)

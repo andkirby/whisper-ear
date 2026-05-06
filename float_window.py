@@ -151,8 +151,9 @@ class FloatWindow(NSObject):
         view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, WIDTH, HEIGHT))
         view.setWantsLayer_(True)
         view.layer().setCornerRadius_(12)
+        alpha = self._config.get("float_window", {}).get("background_alpha", 0.4)
         view.layer().setBackgroundColor_(
-            NSColor.blackColor().colorWithAlphaComponent_(0.82).CGColor()
+            NSColor.blackColor().colorWithAlphaComponent_(alpha).CGColor()
         )
 
         # Pulsing dot

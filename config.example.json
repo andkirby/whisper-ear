@@ -16,5 +16,8 @@
     "enabled": true,
     "verbose": false,
     "log_transcripts": false
+  },
+  "float_window": {
+    "background_alpha": 0.4
   }
 }
