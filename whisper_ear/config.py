@@ -12,6 +12,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "hotkey": {"modifiers": ["option", "shift"], "key": "space"},
     "dictation": {
         "model": "base",
+        "language": None,
         "initial_prompt": "",
         "hotwords": "",
         "vad_parameters": {
@@ -27,7 +28,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "load_model_on_start": False,
         "warm_model_on_recording_start": True,
         "warm_model_delay_seconds": 5,
+        "transcription_timeout_seconds": 180,
     },
+    "recording": {"keep_recent_recordings": 0},
     "logging": {"enabled": True, "verbose": False, "log_transcripts": False},
 }
 

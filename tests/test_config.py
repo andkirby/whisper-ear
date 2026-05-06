@@ -5,12 +5,15 @@ def test_load_config_returns_defaults_for_missing_file(tmp_path):
     config = load_config(tmp_path / "missing.json")
 
     assert config["dictation"]["model"] == "base"
+    assert config["dictation"]["language"] is None
     assert config["dictation"]["vad_parameters"]["threshold"] == 0.45
     assert config["dictation"]["vad_parameters"]["min_silence_duration_ms"] == 500
     assert config["daemon"]["keep_loaded_models"] == ["tiny", "base"]
     assert config["daemon"]["load_model_on_start"] is False
     assert config["daemon"]["warm_model_on_recording_start"] is True
     assert config["daemon"]["warm_model_delay_seconds"] == 5
+    assert config["daemon"]["transcription_timeout_seconds"] == 180
+    assert config["recording"]["keep_recent_recordings"] == 0
 
 
 def test_load_config_merges_nested_sections(tmp_path):
@@ -23,6 +26,7 @@ def test_load_config_merges_nested_sections(tmp_path):
     config = load_config(config_path)
 
     assert config["dictation"]["model"] == "small"
+    assert config["dictation"]["language"] is None
     assert config["dictation"]["initial_prompt"] == ""
     assert config["dictation"]["vad_parameters"]["threshold"] == 0.6
     assert config["dictation"]["vad_parameters"]["speech_pad_ms"] == 250

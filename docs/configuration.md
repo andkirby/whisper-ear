@@ -22,6 +22,7 @@ config.example.json
   },
   "dictation": {
     "model": "base",
+    "language": null,
     "initial_prompt": "",
     "hotwords": "",
     "vad_parameters": {
@@ -31,12 +32,16 @@ config.example.json
       "speech_pad_ms": 250
     }
   },
+  "recording": {
+    "keep_recent_recordings": 0
+  },
   "daemon": {
     "unload_timeout_minutes": 5,
     "keep_loaded_models": ["tiny", "base"],
     "load_model_on_start": false,
     "warm_model_on_recording_start": true,
-    "warm_model_delay_seconds": 5
+    "warm_model_delay_seconds": 5,
+    "transcription_timeout_seconds": 180
   },
   "logging": {
     "enabled": true,
@@ -107,6 +112,18 @@ Set model:
 }
 ```
 
+Force language detection for dictation:
+
+```json
+{
+  "dictation": {
+    "language": "ru"
+  }
+}
+```
+
+Use `null` to auto-detect. For short dictation clips, setting this is more reliable than auto-detection.
+
 Good choices:
 
 - `base`: fastest default.
@@ -145,6 +162,20 @@ Tune speech detection:
 
 These settings are passed to faster-whisper's Silero-VAD. They are tuned for short live dictation clips, so pauses split faster than long-file transcription.
 
+## Recording
+
+Keep the last N `.wav` files instead of deleting them after transcription:
+
+```json
+{
+  "recording": {
+    "keep_recent_recordings": 5
+  }
+}
+```
+
+Default is `0` (delete immediately). Files are stored in `$TMPDIR/whisper-ear/` and rotated by modification time.
+
 ## Daemon
 
 Default:
@@ -156,7 +187,8 @@ Default:
     "keep_loaded_models": ["tiny", "base"],
     "load_model_on_start": false,
     "warm_model_on_recording_start": true,
-    "warm_model_delay_seconds": 5
+    "warm_model_delay_seconds": 5,
+    "transcription_timeout_seconds": 180
   }
 }
 ```
@@ -164,6 +196,8 @@ Default:
 `load_model_on_start` controls whether daemon startup blocks on loading the STT model. By default it does not.
 
 `warm_model_on_recording_start` schedules model loading after recording starts. `warm_model_delay_seconds` defaults to `5` to avoid immediate CPU load while still hiding most model load time behind longer dictations.
+
+`transcription_timeout_seconds` controls how long the CLI waits for the daemon after recording stops. The menu app waits for this value plus a 30s buffer. Keep it higher for `large-v3-turbo`, especially when the model is not already loaded.
 
 ## Logging
 

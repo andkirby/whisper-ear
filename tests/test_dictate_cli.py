@@ -29,3 +29,47 @@ def test_schedule_model_warmup_can_be_disabled(monkeypatch, tmp_path):
     dictate_cli.schedule_model_warmup()
 
     assert calls == []
+
+
+def test_transcription_timeout_uses_config(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"daemon":{"transcription_timeout_seconds":240}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dictate_cli, "CONFIG_PATH", str(config_path))
+
+    assert dictate_cli.transcription_timeout_seconds() == 240.0
+
+
+def test_transcription_timeout_falls_back_for_invalid_config(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"daemon":{"transcription_timeout_seconds":"slow"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dictate_cli, "CONFIG_PATH", str(config_path))
+
+    assert dictate_cli.transcription_timeout_seconds() == 180.0
+
+
+def test_dictation_language_uses_config(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"dictation":{"language":"ru"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dictate_cli, "CONFIG_PATH", str(config_path))
+
+    assert dictate_cli.dictation_language() == "ru"
+
+
+def test_dictation_language_defaults_to_auto_detect(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"dictation":{"language":"   "}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dictate_cli, "CONFIG_PATH", str(config_path))
+
+    assert dictate_cli.dictation_language() is None

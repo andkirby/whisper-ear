@@ -167,7 +167,7 @@ bin/dictate
 
 | Path | Purpose | Lifespan |
 |---|---|---|
-| `$TMPDIR/whisper-ear/audio-<session>.wav` | Recorded audio (48kHz mono, 32-bit) | Deleted after transcription |
+| `$TMPDIR/whisper-ear/audio-<session>.wav` | Recorded audio (48kHz mono, 32-bit) | Deleted after transcription (or kept if `recording.keep_recent_recordings` > 0) |
 | `$TMPDIR/whisper-ear/current-session.json` | Active recording metadata | Deleted after stop |
 | `$TMPDIR/whisper-ear/recording.lock` | Serializes start/stop operations | Persistent runtime lock |
 | `$TMPDIR/whisper-ear/dictated.sock` | Daemon RPC socket | Deleted on stop |

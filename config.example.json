@@ -5,6 +5,7 @@
   },
   "dictation": {
     "model": "base",
+    "language": null,
     "initial_prompt": "",
     "hotwords": "",
     "vad_parameters": {
@@ -14,12 +15,16 @@
       "speech_pad_ms": 250
     }
   },
+  "recording": {
+    "keep_recent_recordings": 5
+  },
   "daemon": {
     "unload_timeout_minutes": 5,
     "keep_loaded_models": ["tiny", "base"],
     "load_model_on_start": false,
     "warm_model_on_recording_start": true,
-    "warm_model_delay_seconds": 5
+    "warm_model_delay_seconds": 5,
+    "transcription_timeout_seconds": 180
   },
   "logging": {
     "enabled": true,

@@ -11,7 +11,7 @@ from pathlib import Path
 from .config import load_config
 from .daemon_client import DaemonClientError, transcribe, warmup
 from .paste import paste_text
-from .recording import active_session, recording_lock, start_recording, stop_recording
+from .recording import active_session, recording_lock, rotate_recordings, start_recording, stop_recording
 from .runtime_paths import ensure_runtime_dir, paths
 
 
@@ -69,6 +69,21 @@ def schedule_model_warmup() -> None:
         print(f"Warning: model warmup was not scheduled: {exc}", file=sys.stderr)
 
 
+def transcription_timeout_seconds() -> float:
+    config = load_config(CONFIG_PATH)
+    timeout = config.get("daemon", {}).get("transcription_timeout_seconds", 180)
+    try:
+        return max(1.0, float(timeout))
+    except (TypeError, ValueError):
+        return 180.0
+
+
+def dictation_language() -> str | None:
+    config = load_config(CONFIG_PATH)
+    language = config.get("dictation", {}).get("language")
+    return language.strip() if isinstance(language, str) and language.strip() else None
+
+
 def check_setup() -> int:
     rec = find_rec()
     print(f"Python: {sys.executable}")
@@ -92,20 +107,26 @@ def toggle_dictation() -> int:
         session = active_session(runtime_paths)
         if session:
             stopped = stop_recording(runtime_paths)
+            config = load_config(CONFIG_PATH)
+            keep = config.get("recording", {}).get("keep_recent_recordings", 0)
             if not stopped:
                 print("No active recording")
                 return 0
             print("Stopped recording")
             print("Transcribing...")
             try:
-                text = transcribe(stopped.audio_path, timeout=90.0)
+                text = transcribe(
+                    stopped.audio_path,
+                    language=dictation_language(),
+                    timeout=transcription_timeout_seconds(),
+                )
             except DaemonClientError as exc:
                 if exc.code == "no_speech":
                     print("No speech detected")
-                    Path(stopped.audio_path).unlink(missing_ok=True)
+                    rotate_recordings(stopped.audio_path, keep, runtime_paths)
                     return 0
                 print(f"Error: {exc.message}")
-                Path(stopped.audio_path).unlink(missing_ok=True)
+                rotate_recordings(stopped.audio_path, keep, runtime_paths)
                 return 1
             if text:
                 paste_text(text)
@@ -113,7 +134,7 @@ def toggle_dictation() -> int:
                 print(text[:120] + ("..." if len(text) > 120 else ""))
             else:
                 print("No speech detected")
-            Path(stopped.audio_path).unlink(missing_ok=True)
+            rotate_recordings(stopped.audio_path, keep, runtime_paths)
             return 0
 
         session = start_recording(rec, REC_LOG, runtime_paths)

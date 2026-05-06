@@ -16,6 +16,17 @@ from pathlib import Path
 from .runtime_paths import RuntimePaths, ensure_runtime_dir, paths
 
 
+def rotate_recordings(audio_path: str | Path, keep: int, runtime_paths: RuntimePaths | None = None) -> None:
+    """Delete *audio_path* unless it should be kept as one of the last *keep* recordings."""
+    if keep <= 0:
+        Path(audio_path).unlink(missing_ok=True)
+        return
+    selected = runtime_paths or paths()
+    wav_files = sorted(selected.root.glob("audio-*.wav"), key=lambda p: p.stat().st_mtime)
+    while len(wav_files) > keep:
+        wav_files.pop(0).unlink(missing_ok=True)
+
+
 @dataclass(frozen=True)
 class RecordingSession:
     session_id: str
