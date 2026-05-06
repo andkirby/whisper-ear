@@ -5,7 +5,6 @@ WhisperEar menu bar prototype for macOS.
 Runs bin/dictate from a menu bar app and listens for Option+Shift+Space.
 """
 
-import json
 import os
 import ctypes
 import signal
@@ -469,18 +468,6 @@ class WhisperEarApp(NSObject):
 
         # Update in-memory config
         self.config.setdefault("dictation", {})["model"] = model_id
-
-        # Persist to config.json
-        try:
-            config_path = Path(CONFIG)
-            config_path.write_text(
-                json.dumps(self.config, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
-            )
-        except Exception as exc:
-            self.log(f"config write error: {exc}")
-            self.float.show(f"Config error: {exc}", mode="error", timeout=2.5)
-            return
 
         # Update menu checkmarks
         for mid, item in self.model_menu_items.items():

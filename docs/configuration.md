@@ -145,6 +145,8 @@ This is passed to Whisper as `initial_prompt` and `hotwords`.
 
 It is not LLM post-processing.
 
+Keep prompt and hotwords language-neutral unless you always dictate in that language. An English technical prompt/hotword list can bias short Russian clips into English translation or hallucinated filler.
+
 Tune speech detection:
 
 ```json
