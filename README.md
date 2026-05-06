@@ -147,6 +147,29 @@ python3 dictated.py stop
 bin/dictate
 ```
 
+## Dictation VAD
+
+Live dictation uses faster-whisper Silero-VAD with short-clip defaults in `config.json`:
+
+```json
+{
+  "dictation": {
+    "vad_parameters": {
+      "threshold": 0.45,
+      "min_speech_duration_ms": 150,
+      "min_silence_duration_ms": 500,
+      "speech_pad_ms": 250
+    }
+  }
+}
+```
+
+Restart the daemon after changes:
+
+```bash
+python3 dictated.py stop
+```
+
 ## macOS Permissions
 
 May be needed:

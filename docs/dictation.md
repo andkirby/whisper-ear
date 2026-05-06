@@ -179,6 +179,26 @@ This is passed to Whisper as `initial_prompt` and `hotwords`. It is not LLM post
 
 Then restart daemon: `python3 dictated.py stop`
 
+### Tune VAD for dictation
+
+In `config.json`:
+```json
+{
+  "dictation": {
+    "vad_parameters": {
+      "threshold": 0.45,
+      "min_speech_duration_ms": 150,
+      "min_silence_duration_ms": 500,
+      "speech_pad_ms": 250
+    }
+  }
+}
+```
+
+These Silero-VAD settings are optimized for short live dictation clips. They keep speech detection responsive without using the longer silence split from file transcription.
+
+Then restart daemon: `python3 dictated.py stop`
+
 ### Change hotkey
 
 In `config.json`:

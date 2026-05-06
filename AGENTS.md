@@ -91,7 +91,7 @@ The float window reads live audio levels during recording:
 
 - **CPU-only, int8 quantization** — no GPU required, works on any Mac
 - **large-v3-turbo** for file transcription (quality), **base** for dictation (speed)
-- **Silero-VAD v6** always on — skips silence, improves accuracy
+- **Silero-VAD v6** always on — dictation uses configurable short-clip defaults (`threshold=0.45`, `min_speech_duration_ms=150`, `min_silence_duration_ms=500`, `speech_pad_ms=250`)
 - **Toggle recording** — single hotkey starts/stops, no hold-to-talk
 - **Paste via System Events** — uses `osascript` to CMD+V into the active app
 - **Daemon keeps model in memory** — `dictated.py` avoids repeated model load on each dictation
@@ -102,7 +102,7 @@ The float window reads live audio levels during recording:
 - **No popover** — removed in favor of float window
 - **Voice level via raw PCM** — background thread reads file tail, not `wave.open()` (which breaks with sox's placeholder header)
 - **ObjCPointerWarning suppressed** — `CGColor()` on `NSColor` triggers a harmless warning, suppressed via `warnings.filterwarnings`
-- **JSON config** — menu app reads `config.json` for hotkey, model, prompt, and hotwords
+- **JSON config** — menu app reads `config.json` for hotkey, model, prompt, hotwords, and VAD parameters
 
 ## Running
 

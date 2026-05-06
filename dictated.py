@@ -37,6 +37,7 @@ MODEL_NAME = os.environ.get("DICTATE_MODEL", "base")
 INITIAL_PROMPT = os.environ.get("DICTATE_INITIAL_PROMPT") or None
 HOTWORDS = os.environ.get("DICTATE_HOTWORDS") or None
 CONFIG_PATH = os.environ.get("DICTATE_CONFIG") or str(ROOT / "config.json")
+VAD_PARAMETERS: dict[str, Any] | None = None
 UNLOAD_TIMEOUT_MINUTES = 5
 KEEP_LOADED_MODELS = ["tiny", "base"]
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
@@ -53,7 +54,7 @@ def daemon_log(message: str) -> None:
 
 
 def load_daemon_config() -> None:
-    global MODEL_NAME, INITIAL_PROMPT, HOTWORDS, UNLOAD_TIMEOUT_MINUTES, KEEP_LOADED_MODELS
+    global MODEL_NAME, INITIAL_PROMPT, HOTWORDS, VAD_PARAMETERS, UNLOAD_TIMEOUT_MINUTES, KEEP_LOADED_MODELS
     config = load_config(CONFIG_PATH)
     dictation = config.get("dictation", {})
     if not os.environ.get("DICTATE_MODEL"):
@@ -62,6 +63,8 @@ def load_daemon_config() -> None:
         INITIAL_PROMPT = dictation.get("initial_prompt") or None
     if not os.environ.get("DICTATE_HOTWORDS"):
         HOTWORDS = dictation.get("hotwords") or None
+    configured_vad = dictation.get("vad_parameters")
+    VAD_PARAMETERS = configured_vad if isinstance(configured_vad, dict) else None
     daemon = config.get("daemon", {})
     UNLOAD_TIMEOUT_MINUTES = daemon.get("unload_timeout_minutes", UNLOAD_TIMEOUT_MINUTES)
     KEEP_LOADED_MODELS = daemon.get("keep_loaded_models", KEEP_LOADED_MODELS)
@@ -175,6 +178,7 @@ class DictationDaemon:
                     str(audio_path),
                     language=language,
                     vad_filter=True,
+                    vad_parameters=VAD_PARAMETERS,
                     initial_prompt=INITIAL_PROMPT,
                     hotwords=HOTWORDS,
                 )

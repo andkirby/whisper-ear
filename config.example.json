@@ -6,7 +6,13 @@
   "dictation": {
     "model": "base",
     "initial_prompt": "",
-    "hotwords": ""
+    "hotwords": "",
+    "vad_parameters": {
+      "threshold": 0.45,
+      "min_speech_duration_ms": 150,
+      "min_silence_duration_ms": 500,
+      "speech_pad_ms": 250
+    }
   },
   "daemon": {
     "unload_timeout_minutes": 5,

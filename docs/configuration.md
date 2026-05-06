@@ -23,7 +23,13 @@ config.example.json
   "dictation": {
     "model": "base",
     "initial_prompt": "",
-    "hotwords": ""
+    "hotwords": "",
+    "vad_parameters": {
+      "threshold": 0.45,
+      "min_speech_duration_ms": 150,
+      "min_silence_duration_ms": 500,
+      "speech_pad_ms": 250
+    }
   },
   "logging": {
     "enabled": true,
@@ -114,6 +120,23 @@ Add Whisper context:
 This is passed to Whisper as `initial_prompt` and `hotwords`.
 
 It is not LLM post-processing.
+
+Tune speech detection:
+
+```json
+{
+  "dictation": {
+    "vad_parameters": {
+      "threshold": 0.45,
+      "min_speech_duration_ms": 150,
+      "min_silence_duration_ms": 500,
+      "speech_pad_ms": 250
+    }
+  }
+}
+```
+
+These settings are passed to faster-whisper's Silero-VAD. They are tuned for short live dictation clips, so pauses split faster than long-file transcription.
 
 ## Logging
 
