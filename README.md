@@ -26,6 +26,14 @@ Use the wrapper from the repo root:
 bin/f-whisper ~/audio.mp4
 ```
 
+Use the whisper-ear dictation daemon for simple text output from a WAV file:
+
+```bash
+python3 dictated.py transcribe /tmp/whisper-test-en.wav
+```
+
+This prints text to stdout and uses the dictation settings in `config.json`.
+
 ### Dictation
 
 Press once to record:
