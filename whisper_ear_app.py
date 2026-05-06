@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Wisper menu bar prototype for macOS.
+WhisperEar menu bar prototype for macOS.
 
 Runs bin/dictate from a menu bar app and listens for Option+Shift+Space.
 """
 
 import os
 import ctypes
-import json
 import signal
 import subprocess
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -33,6 +33,9 @@ from Foundation import NSObject
 from PyObjCTools import AppHelper
 
 from float_window import FloatWindow
+from whisper_ear.config import load_config as load_whisper_ear_config
+from whisper_ear.recording import cleanup_stale_recording
+from whisper_ear.runtime_paths import paths as runtime_paths
 
 ROOT = Path(__file__).resolve().parent
 DICTATE = ROOT / "bin" / "dictate"
@@ -123,7 +126,7 @@ CARBON_MODIFIERS = {
 }
 
 
-class WisperApp(NSObject):
+class WhisperEarApp(NSObject):
     def applicationDidFinishLaunching_(self, notification):
         self.config = self.load_config()
         self.verbose = "--verbose" in sys.argv or self.config.get("logging", {}).get("verbose", False)
@@ -140,6 +143,7 @@ class WisperApp(NSObject):
         self.float = FloatWindow.alloc().initWithConfig_(CONFIG)
         self.float.setConfig_(self.config)
         self.is_recording = False
+        self.dictation_busy = False
         self.install_hotkey_monitor()
         model = self.config.get('dictation', {}).get('model', 'base')
         self.log(
@@ -155,8 +159,9 @@ class WisperApp(NSObject):
         keep = daemon_cfg.get("keep_loaded_models", ["tiny", "base"])
         timeout_min = daemon_cfg.get("unload_timeout_minutes", 5)
         pinned = "pinned" if model in keep else f"unloads after {timeout_min}m"
-        daemon_running = Path("/tmp/dictated/daemon.pid").exists()
-        self.log(f"model={model} ({pinned}) daemon={"running" if daemon_running else "not running"}", force=True)
+        daemon_running = runtime_paths().pid.exists()
+        daemon_state = "running" if daemon_running else "not running"
+        self.log(f"model={model} ({pinned}) daemon={daemon_state}", force=True)
 
     @objc.python_method
     def build_menu(self):
@@ -205,23 +210,7 @@ class WisperApp(NSObject):
 
     @objc.python_method
     def load_config(self):
-        defaults = {
-            "hotkey": {"modifiers": ["option", "shift"], "key": "space"},
-            "dictation": {"model": "base", "initial_prompt": "", "hotwords": ""},
-            "logging": {"enabled": True, "verbose": False, "log_transcripts": False},
-        }
-        if not CONFIG.exists():
-            return defaults
-        try:
-            with CONFIG.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-            defaults.update(data)
-            defaults["hotkey"] = {**{"modifiers": ["option", "shift"], "key": "space"}, **data.get("hotkey", {})}
-            defaults["dictation"] = {**{"model": "base", "initial_prompt": "", "hotwords": ""}, **data.get("dictation", {})}
-            defaults["logging"] = {**{"enabled": True, "verbose": False, "log_transcripts": False}, **data.get("logging", {})}
-            return defaults
-        except Exception:
-            return defaults
+        return load_whisper_ear_config(CONFIG)
 
     @objc.python_method
     def hotkey_label(self, hotkey):
@@ -352,20 +341,11 @@ class WisperApp(NSObject):
         return key.lower() == expected_key.lower()
 
     @objc.python_method
-    @objc.python_method
     def _cleanup_stale_recording(self):
         """Kill any orphaned rec process from a previous session."""
-        lockfile = Path("/tmp/dictate_recording")
-        if not lockfile.exists():
-            return
-        try:
-            pid = int(lockfile.read_text().strip())
-            os.kill(pid, signal.SIGTERM)
+        pid = cleanup_stale_recording()
+        if pid is not None:
             self.log(f"cleaned up orphaned recording (PID {pid})", force=True)
-        except (ProcessLookupError, ValueError, OSError):
-            pass
-        lockfile.unlink(missing_ok=True)
-        Path("/tmp/dictate_audio.wav").unlink(missing_ok=True)
 
     @objc.python_method
     def _run_command(self, args):
@@ -393,27 +373,45 @@ class WisperApp(NSObject):
         )
 
     def toggleDictation_(self, sender):
+        if self.dictation_busy:
+            self.log("dictation ignored: command already running")
+            self.float.show("Busy", mode="error", timeout=1.2)
+            return
         stopping = self.is_recording
         self.is_recording = not self.is_recording
+        self.dictation_busy = True
         self.log("dictation stop requested" if stopping else "dictation start requested")
         self.status_item.button().setTitle_("..." if stopping else "REC")
         self.float.show(
             "Transcribing..." if stopping else "Listening",
             mode="transcribing" if stopping else "recording",
         )
+
+        def worker():
+            try:
+                result = self._run_command([str(DICTATE)])
+                AppHelper.callAfter(self._finish_dictation_command, stopping, result.stdout, None)
+            except Exception as exc:
+                AppHelper.callAfter(self._finish_dictation_command, stopping, "", exc)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @objc.python_method
+    def _finish_dictation_command(self, stopping, output, error):
         try:
-            result = self._run_command([str(DICTATE)])
-            message = self._clean_output(result.stdout.strip() or "Done")
-            self.log_command_result("dictate", result.stdout, message)
+            if error is not None:
+                self.log(f"dictation error {error}")
+                self.is_recording = False
+                self.float.show(f"Error: {error}", mode="error", timeout=2.5)
+                return
+            message = self._clean_output(output.strip() or "Done")
+            self.log_command_result("dictate", output, message)
             if stopping:
                 self.float.show(message, mode="done", timeout=1.8)
             else:
                 self.float.show("Listening", mode="recording")
-        except Exception as exc:
-            self.log(f"dictation error {exc}")
-            self.is_recording = False
-            self.float.show(f"Error: {exc}", mode="error", timeout=2.5)
         finally:
+            self.dictation_busy = False
             self.status_item.button().setTitle_("W")
 
     def checkSetup_(self, sender):
@@ -421,14 +419,14 @@ class WisperApp(NSObject):
             self.log("check setup")
             result = self._run_command([str(DICTATE), "--check"])
             self.log_command_result("check", result.stdout, "shown in alert")
-            self._alert("Wisper setup", result.stdout.strip())
+            self._alert("whisper-ear setup", result.stdout.strip())
         except Exception as exc:
             self.log(f"check setup error {exc}")
-            self._alert("Wisper setup error", str(exc))
+            self._alert("whisper-ear setup error", str(exc))
 
     def toggleDaemon_(self, sender):
         """Toggle daemon start/stop based on current state."""
-        status_file = Path("/tmp/dictated/daemon.pid")
+        status_file = runtime_paths().pid
         if status_file.exists():
             try:
                 pid = int(status_file.read_text().strip())
@@ -456,12 +454,10 @@ class WisperApp(NSObject):
     @objc.python_method
     def _refresh_daemon_status(self):
         """Update daemon status line and toggle button in the menu."""
-        import json as _json
-        status_file = Path("/tmp/dictated/status.json")
         model = self.config.get("dictation", {}).get("model", "base")
 
         daemon_alive = False
-        pid_file = Path("/tmp/dictated/daemon.pid")
+        pid_file = runtime_paths().pid
         if pid_file.exists():
             try:
                 pid = int(pid_file.read_text().strip())
@@ -476,15 +472,13 @@ class WisperApp(NSObject):
             self.status_item.button().setToolTip_(f"{model} — daemon not running")
             return
 
-        if not status_file.exists():
-            self.daemon_status_item.setTitle_(f"● {model} — loading…")
-            self.daemon_toggle_item.setTitle_("Stop Daemon")
-            return
-
         try:
-            data = _json.loads(status_file.read_text())
-            state = data.get("state", "unknown")
-            keep = data.get("keep_loaded", False)
+            result = self._run_command([PYTHON, str(DICTATED), "status"])
+            output = result.stdout.strip()
+            state = "unknown"
+            if "state=" in output:
+                state = output.split("state=", 1)[1].split(",", 1)[0].split(")", 1)[0]
+            keep = "keep_loaded=yes" in output
             timeout = self.config.get("daemon", {}).get("unload_timeout_minutes", 5)
 
             if state == "loaded":
@@ -574,7 +568,7 @@ NSEventModifierFlagShift = 1 << 17
 
 def main():
     if "--help" in sys.argv:
-        print("Usage: bin/wisper-app [--verbose] [--quiet]")
+        print("Usage: bin/whisper-ear-app [--verbose] [--quiet]")
         print("  --verbose  Print command output and detailed logs")
         print("  --quiet    Disable app logs")
         return
@@ -582,14 +576,14 @@ def main():
     AppHelper.installMachInterrupt()
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-    delegate = WisperApp.alloc().init()
+    delegate = WhisperEarApp.alloc().init()
     app.setDelegate_(delegate)
-    print("Wisper app running. Look for W in the macOS menu bar. Press Ctrl-C here to quit.", flush=True)
+    print("whisper-ear app running. Look for W in the macOS menu bar. Press Ctrl-C here to quit.", flush=True)
     AppHelper.runEventLoop()
 
 
 def handle_exit_signal(signum, frame):
-    print("\nWisper app quitting.", flush=True)
+    print("\nwhisper-ear app quitting.", flush=True)
     app = NSApplication.sharedApplication()
     app.terminate_(None)
     sys.exit(0)

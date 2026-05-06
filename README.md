@@ -1,4 +1,4 @@
-# Wisper
+# whisper-ear
 
 Local audio transcription and macOS dictation using `faster-whisper`.
 
@@ -45,14 +45,14 @@ bin/dictate --check
 ### Menu Bar Prototype
 
 ```bash
-bin/wisper-app
+bin/whisper-ear-app
 ```
 
 Adds a `W` menu bar item.
 The terminal stays open while the app runs. Press `Ctrl-C` in that terminal to quit.
 Hotkey/menu actions show a small popover on the `W` item with current state.
 While recording, a small floating status window stays visible.
-App usage logs go to stdout. With `devpt`, use `devpt logs wisper-app`.
+App usage logs go to stdout. With `devpt`, use `devpt logs whisper-ear-app`.
 The app registers the hotkey with macOS, so the active app should not receive the Space press.
 
 Hotkey:
@@ -69,8 +69,8 @@ Option+Shift+Space
 | `dictate.py` | One-shot WAV transcription |
 | `dictated.py` | Dictation daemon, keeps model loaded |
 | `bin/dictate` | Toggle record/stop/paste script |
-| `wisper_app.py` | PyObjC macOS menu bar prototype |
-| `bin/wisper-app` | Launcher for the menu bar app |
+| `whisper_ear_app.py` | PyObjC macOS menu bar prototype |
+| `bin/whisper-ear-app` | Launcher for the menu bar app |
 | `bin/f-whisper` | Wrapper for file transcription |
 | `config.json` | Local app configuration |
 | `config.example.json` | Default config template |
@@ -123,7 +123,7 @@ Use this to bias transcription. This is not LLM cleanup.
 
 ```bash
 export DICTATE_INITIAL_PROMPT="Transcribe natural speech. Preserve the spoken language. Fix obvious word-boundary errors, names, titles, and capitalization when context makes it clear. Do not translate. Do not rewrite meaning."
-export DICTATE_HOTWORDS="Жак Звонарь Фонарь Wisper faster-whisper Hammerspoon"
+export DICTATE_HOTWORDS="Жак Звонарь Фонарь whisper-ear WhisperEar faster-whisper Hammerspoon"
 python3 dictated.py stop
 bin/dictate
 ```
@@ -143,7 +143,7 @@ brew install sox
 pip install faster-whisper
 ```
 
-PyObjC is needed for `wisper_app.py`. It is already available in the current miniforge Python.
+PyObjC is needed for `whisper_ear_app.py`. It is already available in the current miniforge Python.
 
 ## More Docs
 

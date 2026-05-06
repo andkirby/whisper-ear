@@ -1,4 +1,4 @@
-# AGENTS.md — Wisper Project
+# AGENTS.md — whisper-ear Project
 
 > Source of truth for AI agents working in this repo.
 
@@ -8,25 +8,25 @@ Local audio transcription and dictation using **faster-whisper** (CTranslate2 ba
 
 1. **File transcription** (`transcribe.py`) — transcribe audio/video files to JSON/TXT
 2. **Live dictation** (`bin/dictate` + `dictated.py`) — hotkey/menu → record mic → transcribe → paste into active app
-3. **macOS menu bar app** (`wisper_app.py` + `float_window.py` + `bin/wisper-app`) — PyObjC menu bar app with float overlay
+3. **macOS menu bar app** (`whisper_ear_app.py` + `float_window.py` + `bin/whisper-ear-app`) — PyObjC menu bar app with float overlay
 
 ## Repository layout
 
 ```
-wisper/
+whisper_ear/
 ├── AGENTS.md              ← you are here
 ├── TRANSCRIBE_README.md   ← user-facing docs for transcribe.py
 ├── transcribe.py          ← file transcription (JSON/TXT output)
 ├── dictate.py             ← one-shot transcription (stdout, standalone fallback)
-├── dictated.py            ← dictation daemon (keeps Whisper model loaded in memory)
-├── wisper_app.py          ← macOS PyObjC menu bar app (hotkey, menu, delegates to bin/dictate)
+├── dictated.py            ← dictation daemon (Unix socket RPC, keeps Whisper model loaded)
+├── whisper_ear_app.py          ← macOS PyObjC menu bar app (hotkey, menu, delegates to bin/dictate)
 ├── float_window.py        ← float overlay (voice level dot, status text, draggable, position persistence)
 ├── config.json            ← local app config
 ├── config.example.json    ← default config template
 ├── bin/
 │   ├── f-whisper          ← CLI wrapper for transcribe.py (add to PATH)
 │   ├── dictate            ← toggle-record shell script (hotkey/menu target)
-│   └── wisper-app         ← launcher for wisper_app.py
+│   └── whisper-ear-app         ← launcher for whisper_ear_app.py
 ├── docs/
 │   ├── dictation.md       ← dictation architecture and setup guide
 │   ├── configuration.md   ← app config reference
@@ -53,9 +53,9 @@ Check: `python3 -c "from faster_whisper import WhisperModel; print('OK')"`
 ### Dictation flow
 
 ```
-Hotkey (Option+Space) ─→ wisper_app.py (Carbon/AppKit monitor)
+Hotkey (Option+Space) ─→ whisper_ear_app.py (Carbon/AppKit monitor)
   │
-  ├─ 1st press: bin/dictate → sox rec starts writing /tmp/dictate_audio.wav
+  ├─ 1st press: bin/dictate → sox rec starts writing session WAV
   │              float_window shows pulsing dot + "Waiting…" / "Listening"
   │
   └─ 2nd press: bin/dictate → sox stops
@@ -68,18 +68,18 @@ Hotkey (Option+Space) ─→ wisper_app.py (Carbon/AppKit monitor)
 
 | File | Responsibility |
 |---|---|
-| `wisper_app.py` | Menu bar app, Carbon hotkey, config, logging. Delegates dictation to `bin/dictate`. |
+| `whisper_ear_app.py` | Menu bar app, Carbon hotkey, config, logging. Delegates dictation to `bin/dictate`. |
 | `float_window.py` | Float overlay window. Voice-level dot (background thread reads raw PCM from WAV tail), status text, draggable with position persistence. |
-| `dictated.py` | Daemon. Loads Whisper model once, listens for file requests via `/tmp/dictated/`. |
+| `dictated.py` | Daemon. Loads Whisper model once, listens for JSON RPC on `$TMPDIR/whisper-ear/dictated.sock`. |
 | `dictate.py` | Standalone one-shot transcriber (loads model each call). Only used without the daemon. |
-| `bin/dictate` | Shell toggle script. Manages recording lockfile, calls daemon for transcription, handles pbcopy+paste. |
-| `bin/wisper-app` | Launcher script for `wisper_app.py`. |
+| `bin/dictate` | Shell entry point for `whisper_ear.dictate_cli`; manages recording session, calls daemon, handles pbcopy+paste. |
+| `bin/whisper-ear-app` | Launcher script for `whisper_ear_app.py`. |
 
 ### Voice level visualization
 
 The float window reads live audio levels during recording:
 
-1. **Background thread** in `float_window.py` reads the last 0.15s of raw PCM from `/tmp/dictate_audio.wav` (which sox is writing)
+1. **Background thread** in `float_window.py` reads the last 0.15s of raw PCM from the active session WAV
 2. Computes RMS of 32-bit signed int samples
 3. Marshals UI update to main thread via `AppHelper.callAfter`
 4. Dot size scales 6–28px, color shifts red→green based on volume
@@ -94,7 +94,8 @@ The float window reads live audio levels during recording:
 - **Silero-VAD v6** always on — skips silence, improves accuracy
 - **Toggle recording** — single hotkey starts/stops, no hold-to-talk
 - **Paste via System Events** — uses `osascript` to CMD+V into the active app
-- **Daemon keeps model in memory** — `dictated.py` avoids ~0.8s model load on each dictation
+- **Daemon keeps model in memory** — `dictated.py` avoids repeated model load on each dictation
+- **Socket IPC** — daemon communication uses per-user Unix socket RPC, not shared request/response files
 - **Daemon launched via `subprocess.Popen`** — not `os.fork()` (deadlocks with CTranslate2 threads)
 - **Carbon hotkey first** — menu app registers the shortcut with macOS so the foreground app should not receive the keypress; AppKit monitor is fallback only
 - **No system notifications** — float overlay is the only UI feedback (avoids screen capture of notifications)
@@ -123,7 +124,7 @@ bin/dictate   # press again to stop+paste
 
 ### Menu bar app
 ```bash
-bin/wisper-app
+bin/whisper-ear-app
 ```
 
 Adds a `W` menu item, listens for **Option+Space** (configurable in `config.json`). Shows a draggable float overlay with live voice level. macOS may require Microphone, Accessibility, and Input Monitoring permissions.
@@ -131,7 +132,7 @@ Adds a `W` menu item, listens for **Option+Space** (configurable in `config.json
 ### Dictation prompt context
 ```bash
 export DICTATE_INITIAL_PROMPT="Transcribe natural speech. Preserve the spoken language. Do not translate. Do not rewrite meaning."
-export DICTATE_HOTWORDS="Wisper faster-whisper Hammerspoon"
+export DICTATE_HOTWORDS="whisper-ear WhisperEar faster-whisper Hammerspoon"
 python3 dictated.py stop
 bin/dictate
 ```
@@ -141,7 +142,7 @@ bin/dictate
 - Output files go next to the input file by default
 - `bin/` scripts are self-contained CLI entry points
 - Python scripts are importable but primarily CLI tools
-- No tests currently — this is a utility project, not a library
+- Tests live in `tests/` and run with `python3 -m pytest`
 - File encodings are UTF-8
 
 ## Model choices
@@ -160,12 +161,12 @@ bin/dictate
 
 | Path | Purpose | Lifespan |
 |---|---|---|
-| `/tmp/dictate_audio.wav` | Recorded audio (48kHz mono, 32-bit) | Deleted after transcription |
-| `/tmp/dictate_recording` | PID lockfile for toggle | Deleted after stop |
-| `/tmp/dictated/daemon.pid` | Daemon PID | Deleted on stop |
-| `/tmp/dictated/ready` | Signals model loaded | Deleted on stop |
-| `/tmp/dictated/request.json` | Transcription request | Deleted after pickup |
-| `/tmp/dictated/response.json` | Transcription result | Deleted after read |
+| `$TMPDIR/whisper-ear/audio-<session>.wav` | Recorded audio (48kHz mono, 32-bit) | Deleted after transcription |
+| `$TMPDIR/whisper-ear/current-session.json` | Active recording metadata | Deleted after stop |
+| `$TMPDIR/whisper-ear/recording.lock` | Serializes start/stop operations | Persistent runtime lock |
+| `$TMPDIR/whisper-ear/dictated.sock` | Daemon RPC socket | Deleted on stop |
+| `$TMPDIR/whisper-ear/daemon.pid` | Daemon PID | Deleted on stop |
+| `$TMPDIR/whisper-ear/daemon.log` | Timestamped daemon events | Persistent debug log |
 
 ## PyObjC pitfalls (lessons learned)
 

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Float window — draggable, pulsing status overlay for Wisper.
+Float window — draggable, pulsing status overlay for whisper-ear.
 
 Shows a small semi-transparent pill in the corner with:
   - A pulsing red dot while recording
   - Status text (listening / transcribing / done / error)
   - Draggable — remembers position in config
 
-Usage from WisperApp:
+Usage from WhisperEarApp:
     self.float = FloatWindow.alloc().initWithConfig_(config_path)
     self.float.setConfig_(config_dict)
     self.float.show("Listening", mode="recording")
@@ -16,8 +16,6 @@ Usage from WisperApp:
 """
 
 import json
-import math
-import struct
 import threading
 from pathlib import Path
 
@@ -40,6 +38,9 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
+from whisper_ear.audio_levels import read_wav_tail_level
+from whisper_ear.recording import active_session
+
 
 WIDTH = 280
 HEIGHT = 54
@@ -48,7 +49,6 @@ DOT_MIN = 6
 DOT_MAX = 28
 DOT_MARGIN = 16
 LABEL_LEFT = DOT_MARGIN + DOT_MAX + 6  # 50px
-WAV_PATH = Path("/tmp/dictate_audio.wav")
 PULSE_INTERVAL = 0.08  # seconds between ticks
 
 
@@ -244,25 +244,10 @@ class FloatWindow(NSObject):
         We skip wave.open() entirely and read raw bytes — much more reliable
         with a file that's being actively written to.
         """
-        try:
-            fsize = WAV_PATH.stat().st_size
-            if fsize < 200:
-                return 0.0
-            # Read last ~0.15s of audio (48000 Hz * 4 bytes/sample * 0.15s)
-            chunk_bytes = int(48000 * 4 * 0.15)
-            start = max(44, fsize - chunk_bytes)
-            with open(str(WAV_PATH), "rb") as f:
-                f.seek(start)
-                raw = f.read()
-            n_samples = len(raw) // 4
-            if n_samples < 100:
-                return 0.0
-            samples = struct.unpack(f"<{n_samples}i", raw[:n_samples * 4])
-            rms = math.sqrt(sum(s * s for s in samples) / n_samples)
-            # 32-bit range is ±2^31, speech typically 1e7-5e8
-            return min(1.0, rms / 2e8)
-        except Exception:
+        session = active_session()
+        if not session:
             return 0.0
+        return read_wav_tail_level(session.audio_path)
 
     # ── Position persistence ───────────────────────────────
 

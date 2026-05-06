@@ -1,6 +1,6 @@
 # Configuration
 
-Wisper reads app settings from:
+whisper-ear reads app settings from:
 
 ```text
 config.json
@@ -106,7 +106,7 @@ Add Whisper context:
 {
   "dictation": {
     "initial_prompt": "Transcribe natural speech. Preserve the spoken language. Do not translate. Do not rewrite meaning.",
-    "hotwords": "Wisper faster-whisper Hammerspoon Жак Звонарь Фонарь"
+    "hotwords": "whisper-ear WhisperEar faster-whisper Hammerspoon Жак Звонарь Фонарь"
   }
 }
 ```
@@ -132,7 +132,7 @@ Default:
 Logs go to app stdout. With `devpt`:
 
 ```bash
-devpt logs wisper-app
+devpt logs whisper-ear-app
 ```
 
 Options:
@@ -144,13 +144,13 @@ Options:
 One-off verbose run:
 
 ```bash
-bin/wisper-app --verbose
+bin/whisper-ear-app --verbose
 ```
 
 Quiet run:
 
 ```bash
-bin/wisper-app --quiet
+bin/whisper-ear-app --quiet
 ```
 
 ## Apply Changes
@@ -161,5 +161,5 @@ If the model, prompt, or hotwords changed, also stop the daemon:
 
 ```bash
 python3 dictated.py stop
-bin/wisper-app
+bin/whisper-ear-app
 ```

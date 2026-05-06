@@ -2,7 +2,7 @@
 
 ## Current approach: file polling
 
-The app (`wisper_app.py`) communicates with the daemon (`dictated.py`) via files in `/tmp/dictated/`:
+The app (`whisper_ear_app.py`) communicates with the daemon (`dictated.py`) via files in `/tmp/dictated/`:
 
 ```
 /tmp/dictated/
@@ -93,7 +93,7 @@ bin/dictate                          dictated.py (daemon)
 Status queries:
 
 ```
-wisper_app.py                        dictated.py (daemon)
+whisper_ear_app.py                        dictated.py (daemon)
     │                                    │
     │── connect ────────────────────────>│
     │── {"method":"status"} ────────────>│

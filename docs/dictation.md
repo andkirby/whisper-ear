@@ -5,9 +5,9 @@
 ## How it works
 
 ```
-Option+Space (press 1) → sox records mic to /tmp/dictate_audio.wav
+Option+Space (press 1) → sox records mic to $TMPDIR/whisper-ear/audio-<session>.wav
                          float overlay shows voice-level dot + "Waiting…" / "Listening"
-Option+Space (press 2) → sox stops → dictated.py daemon transcribes → pbcopy → CMD+V paste
+Option+Space (press 2) → sox stops → dictated.py socket RPC transcribes → pbcopy → CMD+V paste
                          float overlay shows "✓ result" for 1.8s
 ```
 
@@ -18,10 +18,10 @@ Option+Space (press 2) → sox stops → dictated.py daemon transcribes → pbco
 | File | Purpose |
 |---|---|
 | `bin/dictate` | Shell script — toggle record/stop, calls dictated.py daemon, pastes result |
-| `bin/wisper-app` | macOS menu bar launcher |
+| `bin/whisper-ear-app` | macOS menu bar launcher |
 | `dictate.py` | Standalone one-shot transcriber (used without daemon) |
 | `dictated.py` | Python daemon — keeps the Whisper model loaded between dictations |
-| `wisper_app.py` | PyObjC menu bar app with Carbon hotkey, delegates to bin/dictate |
+| `whisper_ear_app.py` | PyObjC menu bar app with Carbon hotkey, delegates to bin/dictate |
 | `float_window.py` | Float overlay — voice level dot, status text, draggable, position persistence |
 
 ## Setup
@@ -52,7 +52,7 @@ bin/dictate   # press 2 → text pasted
 ### 3. Run the menu bar app
 
 ```bash
-bin/wisper-app
+bin/whisper-ear-app
 ```
 
 Adds a `W` item to the macOS menu bar. Listens for **Option+Space** (configurable in `config.json`).
@@ -74,9 +74,9 @@ macOS may require Microphone, Accessibility, and Input Monitoring permissions.
 
 ```lua
 -- ~/.hammerspoon/init.lua
-local wisper = os.getenv("HOME") .. "/home/wisper"
+local project = "/path/to/whisper-ear"
 hs.hotkey.bind({"cmd", "shift"}, "d", function()
-    hs.execute("cd " .. wisper .. " && bin/dictate")
+    hs.execute("cd " .. project .. " && bin/dictate")
 end)
 ```
 
@@ -84,22 +84,23 @@ end)
 
 1. Open **Shortcuts** app → New Shortcut
 2. Add **"Run Shell Script"** action
-3. Paste: `cd "$HOME/home/wisper" && bin/dictate`
+3. Paste: `cd /path/to/whisper-ear && bin/dictate`
 4. Shortcut settings → **Add Keyboard Shortcut** (e.g. ⌘⇧D)
 
 ## Architecture
 
 ```
-bin/dictate (bash)
-  ├─ START:  rec (sox) → writes /tmp/dictate_audio.wav, PID saved to /tmp/dictate_recording
-  └─ STOP:   kill rec → sleep 0.3 (flush) → python3 dictated.py transcribe → pbcopy → osascript CMD+V
+bin/dictate (bash → whisper_ear.dictate_cli)
+  ├─ START:  rec (sox) → writes $TMPDIR/whisper-ear/audio-<session>.wav
+  │          session metadata saved to $TMPDIR/whisper-ear/current-session.json
+  └─ STOP:   kill rec → sleep 0.3 (flush) → dictated.py socket RPC → pbcopy → osascript CMD+V
 
 dictated.py (python daemon, keeps model in memory)
-  Main loop polls /tmp/dictated/request.json
-  → faster-whisper transcribes → writes /tmp/dictated/response.json
+  Unix socket RPC at $TMPDIR/whisper-ear/dictated.sock
+  → faster-whisper transcribes → returns text or structured error
 
 float_window.py (pyobjc)
-  Background thread reads raw PCM from WAV file tail
+  Background thread reads current session audio tail
   → computes RMS → marshals dot size/color update to main thread
   → dot: 6-28px, red→green based on volume
   → label: "Waiting…" / "Listening" based on voice detection threshold
@@ -114,7 +115,7 @@ float_window.py (pyobjc)
 ### Voice level reading
 
 The float window reads audio levels in real-time:
-- Background thread reads last 0.15s of raw PCM bytes from `/tmp/dictate_audio.wav`
+- Background thread reads last 0.15s of raw PCM bytes from the active session WAV
 - Skips `wave.open()` (sox writes placeholder header) — reads raw 32-bit signed int samples
 - Computes RMS, normalizes to 0–1 range
 - Smoothing: 30% old / 70% new for fast response
@@ -138,8 +139,8 @@ The float window reads audio levels in real-time:
 | Hotkey works in Terminal but not Hammerspoon/Shortcuts | Run `bin/dictate --check`; the script resolves Homebrew/miniforge paths explicitly |
 | Paste doesn't work | Check System Settings → Privacy → Accessibility → enable the trigger app |
 | Slow transcription | Use smaller model: set `DICTATE_MODEL=tiny` for `bin/dictate` or edit `dictated.py` |
-| Empty output | Check the WAV was recorded: `ls -la /tmp/dictate_audio.wav` |
-| Dot doesn't react to voice | Check `/tmp/dictate_audio.wav` exists during recording and grows in size |
+| Empty output | Check the active session WAV under `$TMPDIR/whisper-ear/` was recorded |
+| Dot doesn't react to voice | Check `$TMPDIR/whisper-ear/current-session.json` points to a growing WAV |
 | Daemon won't start | Try `python3 dictated.py serve` for foreground logs |
 
 ## Customization
@@ -169,7 +170,7 @@ In `config.json`:
 {
   "dictation": {
     "initial_prompt": "Transcribe natural speech. Preserve the spoken language.",
-    "hotwords": "Wisper faster-whisper CTranslate2 Hammerspoon"
+    "hotwords": "whisper-ear WhisperEar faster-whisper CTranslate2 Hammerspoon"
   }
 }
 ```

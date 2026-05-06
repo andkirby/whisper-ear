@@ -41,3 +41,9 @@ cards/in/
 cards/out/
 experience/
 vtt/
+
+# other project assets
+research/
+.agents/
+.mdt*
+.tickets
