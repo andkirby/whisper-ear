@@ -71,5 +71,17 @@ def transcribe(
     return data.get("text", "")
 
 
+def warmup(
+    delay_seconds: float = 0,
+    runtime_paths: RuntimePaths | None = None,
+    timeout: float = 2.0,
+) -> dict[str, Any]:
+    return request(
+        {"method": "warmup", "delay_seconds": delay_seconds},
+        runtime_paths=runtime_paths,
+        timeout=timeout,
+    )
+
+
 def shutdown(runtime_paths: RuntimePaths | None = None, timeout: float = 2.0) -> None:
     request({"method": "shutdown"}, runtime_paths=runtime_paths, timeout=timeout)

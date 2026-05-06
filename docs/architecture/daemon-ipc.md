@@ -2,8 +2,10 @@
 
 ## Purpose
 
-`dictated.py` keeps the Whisper model warm and transcribes completed audio files.
-It should not manage hotkeys, recording, paste behavior, or UI.
+`dictated.py` owns Whisper model lifecycle and transcribes completed audio
+files. It can start unloaded, warm the model after a delay, and keep selected
+models resident between dictations. It should not manage hotkeys, recording,
+paste behavior, or UI.
 
 ## Correct Interface
 
@@ -28,10 +30,22 @@ Request:
 {"method":"transcribe","file":"/tmp/whisper-ear/audio-123.wav","language":null}
 ```
 
+Warmup request:
+
+```json
+{"method":"warmup","delay_seconds":5}
+```
+
 Success response:
 
 ```json
 {"ok":true,"text":"Hello world"}
+```
+
+Warmup response:
+
+```json
+{"ok":true,"state":"unloaded","warmup_started":true,"delay_seconds":5}
 ```
 
 Error response:
@@ -45,6 +59,7 @@ Error response:
 | Method | Owner | Behavior |
 |---|---|---|
 | `status` | daemon | Returns pid, state, model, keep-loaded flag, and last error. |
+| `warmup` | daemon | Schedules model loading after optional `delay_seconds`; returns immediately. |
 | `transcribe` | daemon | Transcribes an existing audio file and returns text or structured error. |
 | `shutdown` | daemon | Stops the daemon and cleans runtime socket files. |
 
@@ -52,14 +67,19 @@ Error response:
 
 ```text
 starting -> loading -> loaded -> transcribing -> loaded
+starting -> unloaded
 loaded -> unloaded
 unloaded -> loading
 any -> stopping
 ```
 
-The daemon should bind the socket early. While the model is loading, `status`
-returns `loading`; `transcribe` may either wait for load or return `loading`
-based on client timeout.
+The daemon should bind the socket early. By default startup reaches `unloaded`
+without loading the model. `warmup` or `transcribe` moves `unloaded -> loading`.
+While the model is loading, `status` returns `loading`; `transcribe` may wait
+for load based on client timeout.
+
+Repeated `warmup` calls are idempotent while a warmup thread is already running
+or the model is already loaded.
 
 ## Concurrency
 

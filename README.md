@@ -170,6 +170,22 @@ Restart the daemon after changes:
 python3 dictated.py stop
 ```
 
+## Model Warmup
+
+Recording starts before the STT model is loaded. By default, `bin/dictate` asks the daemon to warm the model 5 seconds after recording starts:
+
+```json
+{
+  "daemon": {
+    "load_model_on_start": false,
+    "warm_model_on_recording_start": true,
+    "warm_model_delay_seconds": 5
+  }
+}
+```
+
+Short clips avoid unnecessary CPU load; longer clips hide most model load time behind recording.
+
 ## macOS Permissions
 
 May be needed:

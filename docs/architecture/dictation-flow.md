@@ -10,7 +10,7 @@ This document defines the correct end-to-end flow for hotkey dictation.
 |---|---|
 | `whisper_ear_app.py` | Hotkey, menu status, float overlay updates. |
 | Dictation controller | Start/stop recorder, call daemon, paste text, cleanup runtime files. |
-| `dictated.py` | Keep model loaded, transcribe completed audio files. |
+| `dictated.py` | Warm/load model on request, keep model loaded, transcribe completed audio files. |
 | `float_window.py` | Render overlay and read live WAV tail for voice level. |
 
 ## Start Recording
@@ -21,6 +21,7 @@ sequenceDiagram
     participant App as whisper_ear_app.py
     participant Controller as dictation controller
     participant Sox as sox rec
+    participant Daemon as dictated.py
     participant Runtime as $TMPDIR/whisper-ear
 
     User->>App: hotkey press
@@ -28,6 +29,7 @@ sequenceDiagram
     Controller->>Runtime: acquire recording.lock
     Controller->>Sox: spawn recorder
     Controller->>Runtime: write current-session.json
+    Controller->>Daemon: warmup(delay_seconds=5)
     Controller-->>App: recording started
     App->>App: show Listening
 ```
@@ -68,4 +70,3 @@ then update the UI on the main thread.
 | `no_speech` | Show no speech | Do not paste |
 | `busy` | Show busy | Do not paste |
 | Other error | Show error | Do not paste |
-

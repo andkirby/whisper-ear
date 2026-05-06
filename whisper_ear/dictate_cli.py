@@ -8,7 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .daemon_client import DaemonClientError, transcribe
+from .config import load_config
+from .daemon_client import DaemonClientError, transcribe, warmup
 from .paste import paste_text
 from .recording import active_session, recording_lock, start_recording, stop_recording
 from .runtime_paths import ensure_runtime_dir, paths
@@ -16,6 +17,7 @@ from .runtime_paths import ensure_runtime_dir, paths
 
 ROOT = Path(__file__).resolve().parents[1]
 DICTATED = ROOT / "dictated.py"
+CONFIG_PATH = os.environ.get("DICTATE_CONFIG") or str(ROOT / "config.json")
 REC_LOG = Path("/tmp/dictate_rec.log")
 
 
@@ -53,6 +55,18 @@ def ensure_daemon_running() -> None:
     )
     if result.returncode != 0:
         raise RuntimeError(result.stdout.strip() or "Dictation daemon failed to start")
+
+
+def schedule_model_warmup() -> None:
+    config = load_config(CONFIG_PATH)
+    daemon = config.get("daemon", {})
+    if not daemon.get("warm_model_on_recording_start", True):
+        return
+    delay = daemon.get("warm_model_delay_seconds", 5)
+    try:
+        warmup(float(delay), timeout=2.0)
+    except (DaemonClientError, TypeError, ValueError) as exc:
+        print(f"Warning: model warmup was not scheduled: {exc}", file=sys.stderr)
 
 
 def check_setup() -> int:
@@ -103,6 +117,7 @@ def toggle_dictation() -> int:
             return 0
 
         session = start_recording(rec, REC_LOG, runtime_paths)
+        schedule_model_warmup()
         print(f"Recording... press hotkey again to stop")
         print(f"Audio: {session.audio_path}")
         return 0

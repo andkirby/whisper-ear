@@ -31,6 +31,13 @@ config.example.json
       "speech_pad_ms": 250
     }
   },
+  "daemon": {
+    "unload_timeout_minutes": 5,
+    "keep_loaded_models": ["tiny", "base"],
+    "load_model_on_start": false,
+    "warm_model_on_recording_start": true,
+    "warm_model_delay_seconds": 5
+  },
   "logging": {
     "enabled": true,
     "verbose": false,
@@ -137,6 +144,26 @@ Tune speech detection:
 ```
 
 These settings are passed to faster-whisper's Silero-VAD. They are tuned for short live dictation clips, so pauses split faster than long-file transcription.
+
+## Daemon
+
+Default:
+
+```json
+{
+  "daemon": {
+    "unload_timeout_minutes": 5,
+    "keep_loaded_models": ["tiny", "base"],
+    "load_model_on_start": false,
+    "warm_model_on_recording_start": true,
+    "warm_model_delay_seconds": 5
+  }
+}
+```
+
+`load_model_on_start` controls whether daemon startup blocks on loading the STT model. By default it does not.
+
+`warm_model_on_recording_start` schedules model loading after recording starts. `warm_model_delay_seconds` defaults to `5` to avoid immediate CPU load while still hiding most model load time behind longer dictations.
 
 ## Logging
 

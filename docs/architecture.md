@@ -33,6 +33,7 @@ graph TB
     E --> F
     F -->|writes| J
     E -->|records session| I
+    D -->|warmup RPC| K
     D -->|transcribe RPC| K
     K --> G
     G --> H
@@ -61,6 +62,7 @@ sequenceDiagram
     CLI->>Runtime: acquire recording.lock
     CLI->>Rec: start recorder
     CLI->>Runtime: write current-session.json
+    CLI->>Daemon: warmup RPC with 5s delay
 
     User->>App: hotkey press
     App->>App: show Transcribing
@@ -79,16 +81,22 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Loading: start / first request
+    [*] --> Unloaded: start
+    [*] --> Loading: start with load_model_on_start
     Loading --> Loaded: model ready
+    Unloaded --> Loading: warmup / transcribe
     Loaded --> Transcribing: transcribe request
     Transcribing --> Loaded: response sent
     Loaded --> Unloaded: idle timeout
-    Unloaded --> Loading: new request
     Loaded --> Stopping: shutdown
     Unloaded --> Stopping: shutdown
     Stopping --> [*]
 ```
+
+Default startup binds the socket and reports `state=unloaded` without loading
+the STT model. `bin/dictate` schedules `warmup(delay_seconds=5)` after recording
+starts, so longer recordings hide most model load time while short recordings
+avoid immediate CPU load.
 
 ### Auto-Unload Rules
 
@@ -148,6 +156,7 @@ Supported methods:
 | Method | Behavior |
 |---|---|
 | `status` | Return pid, state, model, keep-loaded flag, and last error. |
+| `warmup` | Schedule model loading after an optional delay. |
 | `transcribe` | Transcribe an existing audio file. |
 | `shutdown` | Stop daemon and clean socket/pid files. |
 
@@ -180,4 +189,3 @@ while recording.
 | Whisper `large-v3-turbo` model | ~809 MB | Default file transcription model |
 | `sox rec` | ~5 MB | During recording only |
 | Runtime WAV | disk only | During recording/transcription |
-

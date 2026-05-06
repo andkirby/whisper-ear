@@ -40,6 +40,7 @@ CONFIG_PATH = os.environ.get("DICTATE_CONFIG") or str(ROOT / "config.json")
 VAD_PARAMETERS: dict[str, Any] | None = None
 UNLOAD_TIMEOUT_MINUTES = 5
 KEEP_LOADED_MODELS = ["tiny", "base"]
+LOAD_MODEL_ON_START = False
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
 
@@ -54,7 +55,7 @@ def daemon_log(message: str) -> None:
 
 
 def load_daemon_config() -> None:
-    global MODEL_NAME, INITIAL_PROMPT, HOTWORDS, VAD_PARAMETERS, UNLOAD_TIMEOUT_MINUTES, KEEP_LOADED_MODELS
+    global MODEL_NAME, INITIAL_PROMPT, HOTWORDS, VAD_PARAMETERS, UNLOAD_TIMEOUT_MINUTES, KEEP_LOADED_MODELS, LOAD_MODEL_ON_START
     config = load_config(CONFIG_PATH)
     dictation = config.get("dictation", {})
     if not os.environ.get("DICTATE_MODEL"):
@@ -68,6 +69,7 @@ def load_daemon_config() -> None:
     daemon = config.get("daemon", {})
     UNLOAD_TIMEOUT_MINUTES = daemon.get("unload_timeout_minutes", UNLOAD_TIMEOUT_MINUTES)
     KEEP_LOADED_MODELS = daemon.get("keep_loaded_models", KEEP_LOADED_MODELS)
+    LOAD_MODEL_ON_START = bool(daemon.get("load_model_on_start", LOAD_MODEL_ON_START))
 
 
 def should_keep_loaded(model: str | None = None) -> bool:
@@ -113,7 +115,9 @@ class DictationDaemon:
         self.last_error: dict[str, str] | None = None
         self.should_stop = False
         self.state_lock = threading.RLock()
+        self.model_lock = threading.Lock()
         self.transcription_lock = threading.Lock()
+        self.warmup_thread: threading.Thread | None = None
 
     def status_payload(self) -> dict[str, Any]:
         with self.state_lock:
@@ -126,24 +130,54 @@ class DictationDaemon:
             )
 
     def load_model(self) -> None:
-        if self.model is not None:
-            return
-        self.state = "loading"
-        daemon_log(f"loading model {MODEL_NAME}")
-        try:
-            from faster_whisper import WhisperModel
+        with self.model_lock:
+            if self.model is not None:
+                return
+            self.state = "loading"
+            daemon_log(f"loading model {MODEL_NAME}")
+            try:
+                from faster_whisper import WhisperModel
 
-            started = time.time()
-            self.model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
-            daemon_log(f"model {MODEL_NAME} loaded ({time.time() - started:.1f}s)")
-            self.state = "loaded"
-            self.last_error = None
-        except Exception as exc:
-            with self.state_lock:
-                self.state = "unloaded"
-                self.last_error = {"code": "model_load_failed", "message": str(exc)}
-            daemon_log(f"model load error: {exc}")
-            raise
+                started = time.time()
+                self.model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
+                daemon_log(f"model {MODEL_NAME} loaded ({time.time() - started:.1f}s)")
+                self.state = "loaded"
+                self.last_error = None
+            except Exception as exc:
+                with self.state_lock:
+                    self.state = "unloaded"
+                    self.last_error = {"code": "model_load_failed", "message": str(exc)}
+                daemon_log(f"model load error: {exc}")
+                raise
+
+    def warm_model(self, delay_seconds: float = 0) -> dict[str, Any]:
+        if self.model is not None:
+            return ok_response(state=self.state, warmup_started=False)
+        if self.warmup_thread and self.warmup_thread.is_alive():
+            return ok_response(state=self.state, warmup_started=False)
+
+        delay = max(0.0, delay_seconds)
+
+        def run() -> None:
+            daemon_log(f"warming model in {delay:.1f}s")
+            deadline = time.time() + delay
+            while not self.should_stop and time.time() < deadline:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    break
+                time.sleep(min(0.25, remaining))
+            if self.should_stop or self.model is not None:
+                return
+            try:
+                self.load_model()
+                if self.last_request_time is None:
+                    self.last_request_time = time.time()
+            except Exception:
+                pass
+
+        self.warmup_thread = threading.Thread(target=run, daemon=True)
+        self.warmup_thread.start()
+        return ok_response(state=self.state, warmup_started=True, delay_seconds=delay)
 
     def unload_if_idle(self) -> None:
         if should_keep_loaded() or self.model is None or self.last_request_time is None:
@@ -205,6 +239,12 @@ class DictationDaemon:
             return self.status_payload()
         if method == "transcribe":
             return self.transcribe_file(payload)
+        if method == "warmup":
+            try:
+                delay_seconds = float(payload.get("delay_seconds") or 0)
+            except (TypeError, ValueError):
+                return error_response("invalid_request", "delay_seconds must be a number")
+            return self.warm_model(delay_seconds)
         if method == "shutdown":
             self.should_stop = True
             self.state = "stopping"
@@ -230,10 +270,14 @@ class DictationDaemon:
         signal.signal(signal.SIGINT, stop)
 
         try:
-            try:
-                self.load_model()
-            except Exception:
-                pass
+            if LOAD_MODEL_ON_START:
+                try:
+                    self.load_model()
+                except Exception:
+                    pass
+            else:
+                with self.state_lock:
+                    self.state = "unloaded"
 
             while not self.should_stop:
                 self.unload_if_idle()

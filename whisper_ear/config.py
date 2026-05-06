@@ -21,7 +21,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "speech_pad_ms": 250,
         },
     },
-    "daemon": {"unload_timeout_minutes": 5, "keep_loaded_models": ["tiny", "base"]},
+    "daemon": {
+        "unload_timeout_minutes": 5,
+        "keep_loaded_models": ["tiny", "base"],
+        "load_model_on_start": False,
+        "warm_model_on_recording_start": True,
+        "warm_model_delay_seconds": 5,
+    },
     "logging": {"enabled": True, "verbose": False, "log_transcripts": False},
 }
 

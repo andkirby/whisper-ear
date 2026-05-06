@@ -16,7 +16,10 @@
   },
   "daemon": {
     "unload_timeout_minutes": 5,
-    "keep_loaded_models": ["tiny", "base"]
+    "keep_loaded_models": ["tiny", "base"],
+    "load_model_on_start": false,
+    "warm_model_on_recording_start": true,
+    "warm_model_delay_seconds": 5
   },
   "logging": {
     "enabled": true,

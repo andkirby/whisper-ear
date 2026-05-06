@@ -6,6 +6,7 @@
 
 ```
 Option+Space (press 1) → sox records mic to $TMPDIR/whisper-ear/audio-<session>.wav
+                         daemon warmup is scheduled after 5s by default
                          float overlay shows voice-level dot + "Waiting…" / "Listening"
 Option+Space (press 2) → sox stops → dictated.py socket RPC transcribes → pbcopy → CMD+V paste
                          float overlay shows "✓ result" for 1.8s
@@ -20,7 +21,7 @@ Option+Space (press 2) → sox stops → dictated.py socket RPC transcribes → 
 | `bin/dictate` | Shell script — toggle record/stop, calls dictated.py daemon, pastes result |
 | `bin/whisper-ear-app` | macOS menu bar launcher |
 | `dictate.py` | Standalone one-shot transcriber (used without daemon) |
-| `dictated.py` | Python daemon — keeps the Whisper model loaded between dictations |
+| `dictated.py` | Python daemon — warms/keeps the Whisper model and transcribes completed recordings |
 | `whisper_ear_app.py` | PyObjC menu bar app with Carbon hotkey, delegates to bin/dictate |
 | `float_window.py` | Float overlay — voice level dot, status text, draggable, position persistence |
 
@@ -65,6 +66,7 @@ Features:
 - **Menu**: Toggle Dictation, Check Setup, Stop Daemon, Quit
 - **Carbon hotkey**: registers with macOS so foreground app doesn't receive the keypress
 - **Auto-starts daemon**: if `dictated.py` isn't running, starts it automatically
+- **Delayed model warmup**: recording starts first, then model loading is scheduled after 5s by default
 
 macOS may require Microphone, Accessibility, and Input Monitoring permissions.
 
@@ -93,10 +95,12 @@ end)
 bin/dictate (bash → whisper_ear.dictate_cli)
   ├─ START:  rec (sox) → writes $TMPDIR/whisper-ear/audio-<session>.wav
   │          session metadata saved to $TMPDIR/whisper-ear/current-session.json
+  │          warmup(delay_seconds=5) scheduled on dictated.py
   └─ STOP:   kill rec → sleep 0.3 (flush) → dictated.py socket RPC → pbcopy → osascript CMD+V
 
-dictated.py (python daemon, keeps model in memory)
+dictated.py (python daemon, loads model on warmup/transcribe)
   Unix socket RPC at $TMPDIR/whisper-ear/dictated.sock
+  → warmup RPC can load model after recording starts
   → faster-whisper transcribes → returns text or structured error
 
 float_window.py (pyobjc)
@@ -126,7 +130,8 @@ The float window reads audio levels in real-time:
 | Step | Time |
 |---|---|
 | Stop recording (sox flush) | ~300ms |
-| Transcription (`base` model, daemon) | ~0.5-2s |
+| Model load | usually hidden by warmup on recordings longer than 5s |
+| Transcription (`base` model, warm daemon) | ~0.5-2s |
 | Clipboard + paste | ~100ms |
 | **Total** | **~1-3s** |
 
@@ -196,6 +201,23 @@ In `config.json`:
 ```
 
 These Silero-VAD settings are optimized for short live dictation clips. They keep speech detection responsive without using the longer silence split from file transcription.
+
+Then restart daemon: `python3 dictated.py stop`
+
+### Change model warmup
+
+Default:
+```json
+{
+  "daemon": {
+    "load_model_on_start": false,
+    "warm_model_on_recording_start": true,
+    "warm_model_delay_seconds": 5
+  }
+}
+```
+
+This starts recording without waiting for the STT model. If recording continues for at least 5 seconds, the daemon begins loading the model in the background.
 
 Then restart daemon: `python3 dictated.py stop`
 

@@ -2,6 +2,11 @@
 
 > Source of truth for AI agents working in this repo.
 
+Durable project knowledge belongs in `docs/`. When behavior, architecture,
+configuration, or operating workflows change, update the relevant `docs/` file
+in the same change. Keep this file as the agent entrypoint and project map; use
+`docs/` as the durable source of truth.
+
 ## What this project does
 
 Local audio transcription and dictation using **faster-whisper** (CTranslate2 backend). Main modes:
@@ -95,6 +100,7 @@ The float window reads live audio levels during recording:
 - **Toggle recording** — single hotkey starts/stops, no hold-to-talk
 - **Paste via System Events** — uses `osascript` to CMD+V into the active app
 - **Daemon keeps model in memory** — `dictated.py` avoids repeated model load on each dictation
+- **Delayed model warmup** — recording starts before model load; by default `bin/dictate` schedules daemon warmup 5s after recording starts
 - **Socket IPC** — daemon communication uses per-user Unix socket RPC, not shared request/response files
 - **Daemon launched via `subprocess.Popen`** — not `os.fork()` (deadlocks with CTranslate2 threads)
 - **Carbon hotkey first** — menu app registers the shortcut with macOS so the foreground app should not receive the keypress; AppKit monitor is fallback only
